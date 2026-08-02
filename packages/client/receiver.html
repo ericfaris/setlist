@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Music Trivia — TV</title>
+    <link rel="icon" href="/favicon.ico" />
+    <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!--
+      The YouTube player lives OUTSIDE React's render tree on purpose. YT.Player
+      replaces this div with its own iframe; if React ever re-rendered around it
+      the player would be re-created, restarting audio and leaking iframes.
+      React only commands the instance via refs (see receiver/YouTubePlayer.tsx).
+      It is kept in the layout (not display:none) so the browser doesn't suspend
+      audio — the .ytshield overlay in styles.css hides the video, whose chrome
+      would otherwise print the song title, i.e. the answer, on the TV.
+    -->
+    <div id="yt-stage" class="ytstage">
+      <div id="yt-player"></div>
+      <div class="ytshield"></div>
+    </div>
+    <!--
+      Module script is deferred (runs after parsing completes).
+      The inline scripts below are regular scripts — they run immediately when
+      the parser reaches them, BEFORE the module executes. That guarantees
+      ctx.start() is called while the module is still loading.
+    -->
+    <script type="module" src="/src/receiver/main.tsx"></script>
+    <script>
+      // Poll /api/cast-room every 2s as a fallback in case the Cast messaging
+      // channel / socket push (see main.tsx) never delivers a code. Redirecting
+      // reloads the page (a real socket disconnect for the TV), so store.ts
+      // clears window.__castPollTimer the moment a code arrives via any path —
+      // don't redirect on top of a session that's already live.
+      (function () {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get('code')) return; // already have a code, skip polling
+        window.__castPollTimer = setInterval(function () {
+          fetch('/api/cast-room', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (d && d.code) {
+                clearInterval(window.__castPollTimer);
+                var v = params.get('v') || '';
+                window.location.replace('/receiver.html?code=' + d.code + (v ? '&v=' + v : ''));
+              }
+            })
+            .catch(function () {});
+        }, 2000);
+      })();
+    </script>
+    <script>
+      window.__castPendingCode = null;
+      window.__castInitError = null;
+      (function () {
+        try {
+          if (!window.cast || !window.cast.framework || !window.cast.framework.CastReceiverContext) {
+            window.__castInitError = 'Cast SDK not available on window';
+            return;
+          }
+          var NS = 'urn:x-cast:com.mooseflip.musictrivia';
+          var ctx = cast.framework.CastReceiverContext.getInstance();
+
+          // PlayerManager must be obtained before ctx.start() in CAF
+          var pm = ctx.getPlayerManager();
+          var audio = document.createElement('audio');
+          document.body.appendChild(audio);
+          pm.setMediaElement(audio);
+
+          ctx.addCustomMessageListener(NS, function (e) {
+            var code = e && e.data && e.data.code;
+            if (!code) return;
+            window.__castPendingCode = String(code);
+            if (window.__castOnCode) window.__castOnCode(window.__castPendingCode);
+          });
+
+          ctx.start({ disableIdleTimeout: true });
+        } catch (err) {
+          window.__castInitError = String(err);
+        }
+      })();
+    </script>
+  </body>
+</html>

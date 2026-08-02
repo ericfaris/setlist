@@ -1,0 +1,184 @@
+:root {
+  --bg: #0b1020;
+  --bg-2: #121933;
+  --panel: #1a2347;
+  --panel-2: #222d5a;
+  --text: #eaf0ff;
+  --muted: #93a0c8;
+  --accent: #4f7cff;
+  --good: #34d399;
+  --bad: #f87171;
+  --warn: #fbbf24;
+  --gold: #f5c451;
+  --line: #2a3766;
+  --jeopardy: #0b1f6b;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(1200px 800px at 50% -10%, var(--bg-2), var(--bg));
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: 12px;
+  transition: transform 0.06s ease, background 0.15s ease, opacity 0.15s;
+}
+button:hover { background: var(--panel-2); }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: transparent; font-weight: 600; }
+button.primary:hover { background: #6a91ff; }
+button.good { background: var(--good); color: #06231a; border: none; font-weight: 700; }
+button.bad { background: var(--bad); color: #2a0707; border: none; font-weight: 700; }
+button.ghost { background: transparent; }
+
+input, select {
+  font: inherit;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  width: 100%;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); }
+
+.app { max-width: 560px; margin: 0 auto; padding: 20px 16px 60px; min-height: 100%; }
+.center { min-height: 100%; display: grid; place-items: center; }
+.stack { display: flex; flex-direction: column; gap: 14px; }
+.row { display: flex; gap: 10px; align-items: center; }
+.spread { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.wrap { flex-wrap: wrap; }
+.grow { flex: 1; }
+.muted { color: var(--muted); }
+.small { font-size: 0.85rem; }
+.center-text { text-align: center; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px;
+}
+.title { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.5px; }
+.h2 { font-size: 1.15rem; font-weight: 700; margin: 0; }
+.pill { padding: 4px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; border: 1px solid var(--line); }
+.banner { padding: 10px 14px; border-radius: 12px; background: #3a1d20; color: #ffd7d7; border: 1px solid #6b2b30; }
+.notice { padding: 10px 14px; border-radius: 12px; background: #14233f; border: 1px solid var(--line); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------------- Board (phone + TV share the vocabulary) ---------------- */
+.board { display: grid; gap: 6px; }
+.board .cathead {
+  background: var(--jeopardy);
+  border-radius: 8px;
+  padding: 8px 6px;
+  font-weight: 800;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  overflow-wrap: anywhere;
+}
+.cell {
+  background: var(--jeopardy);
+  color: var(--gold);
+  border: 1px solid #16307f;
+  border-radius: 8px;
+  font-weight: 900;
+  padding: 14px 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+button.cell:hover { background: #12309a; }
+.cell.used { background: #0b1020; color: transparent; border-color: var(--line); }
+
+/* ---------------- Buzzer ---------------- */
+.buzz {
+  height: 40vh;
+  min-height: 180px;
+  width: 100%;
+  border-radius: 24px;
+  border: none;
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: 1px;
+  background: linear-gradient(180deg, #ff6b6b, #d92b2b);
+  color: #fff;
+  box-shadow: 0 10px 0 #8f1a1a;
+  touch-action: manipulation;
+  user-select: none;
+}
+.buzz:active { transform: translateY(6px); box-shadow: 0 4px 0 #8f1a1a; }
+.buzz:disabled { opacity: 1; }
+.buzz.locked { background: linear-gradient(180deg, #3a4680, #262f5c); box-shadow: 0 10px 0 #161c39; font-size: 1.4rem; }
+.buzz.mine { background: linear-gradient(180deg, #34d399, #0f9f72); box-shadow: 0 10px 0 #0a6a4c; color: #06231a; }
+.buzz.out { background: linear-gradient(180deg, #4a3050, #2c1c30); box-shadow: 0 10px 0 #1a1020; font-size: 1.3rem; }
+
+.scorerow {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+}
+.scorerow.me { border-color: var(--accent); }
+.nowplaying { display: flex; flex-direction: column; gap: 4px; }
+.clipbar { height: 8px; border-radius: 999px; background: var(--bg-2); overflow: hidden; border: 1px solid var(--line); }
+.clipbar > div { height: 100%; background: var(--accent); transition: width 0.25s linear; }
+
+/* ---------------- Receiver (TV) ---------------- */
+.tv { width: 100vw; height: 100vh; overflow: hidden; padding: 3vh 4vw; display: flex; flex-direction: column; gap: 2vh; }
+.tv .brand { font-size: 2.4vw; font-weight: 800; letter-spacing: 2px; color: var(--muted); }
+.tv .codebox { font-size: 9vw; font-weight: 900; letter-spacing: 1vw; }
+.tv .qr { background: #fff; padding: 1vw; border-radius: 1vw; }
+.tv .players { display: flex; gap: 2vw; flex-wrap: wrap; }
+.tv .pchip { font-size: 1.8vw; padding: 0.6vh 1.2vw; border-radius: 999px; border: 2px solid var(--line); }
+/* .center carries min-height:100% for the phone's full-page centering; inside
+   the TV's flex column that overflows the viewport and pushes the clip bar and
+   scoreboard off the bottom of the screen. Only the .tv element itself may be
+   full height. */
+.tv > .center { min-height: 0; }
+.tv .board { flex: 1; gap: 0.8vw; }
+.tv .board .cathead { font-size: 1.7vw; padding: 1.5vh 0.5vw; border-radius: 0.8vw; }
+.tv .cell { font-size: 4vw; padding: 0; display: grid; place-items: center; border-radius: 0.8vw; }
+.tv .scores { display: flex; gap: 1.5vw; flex-wrap: wrap; }
+.tv .scorecard { background: var(--panel); border-radius: 1.2vw; padding: 1.2vh 1.6vw; border: 2px solid var(--line); text-align: center; }
+.tv .scorecard.leader { border-color: var(--gold); }
+.tv .scorecard .nm { font-size: 1.6vw; font-weight: 700; }
+.tv .scorecard .sc { font-size: 3vw; font-weight: 900; font-variant-numeric: tabular-nums; }
+.tv .big { font-size: 6vw; font-weight: 900; text-align: center; }
+.tv .huge { font-size: 9vw; font-weight: 900; text-align: center; }
+.tv .sub { font-size: 3vw; font-weight: 700; color: var(--muted); text-align: center; }
+.tv .clipbar { height: 2vh; border-radius: 999px; }
+
+/* The YouTube iframe must stay rendered (audio keeps playing) but must never
+   be visible — its chrome prints the song title, which is the answer. */
+.ytstage { position: fixed; left: 0; top: 0; width: 480px; height: 270px; z-index: -1; opacity: 0; pointer-events: none; }
+.ytshield { position: absolute; inset: 0; background: #000; pointer-events: none; }
+
+.audiocover {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 10, 26, 0.94);
+  font-size: 4vw;
+  font-weight: 900;
+  border: none;
+  color: var(--text);
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
