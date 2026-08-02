@@ -6,7 +6,7 @@ import {
   type JudgeVerdict,
   type PrivateState,
   type PublicRoom,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 
 export interface GameState {
   connected: boolean;
@@ -20,9 +20,9 @@ export interface GameState {
 
 type Listener = () => void;
 
-const LS_CODE = 'mt:code';
-const LS_TOKEN = 'mt:token';
-const LS_NAME = 'mt:name';
+const LS_CODE = 'sl:code';
+const LS_TOKEN = 'sl:token';
+const LS_NAME = 'sl:name';
 
 class GameStore {
   private socket: Socket;

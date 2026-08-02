@@ -2,7 +2,7 @@
 // checked code generation, and frees codes when rooms close. Multiple
 // simultaneous rooms fall out of this for free — the registry is keyed by code
 // and nothing above it is global.
-import type { QuestionBank } from '@music-trivia/shared';
+import type { QuestionBank } from '@setlist/shared';
 import { GameEngine } from '../engine/engine.js';
 import { makeRng } from '../engine/rng.js';
 

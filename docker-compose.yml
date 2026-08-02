@@ -1,0 +1,33 @@
+# Project name fixes the container name to setlist-app-1 regardless of
+# the directory the compose file lives in.
+name: setlist
+
+services:
+  app:
+    build: .
+    image: ericfaris/setlist:latest
+    restart: unless-stopped
+    # Run as the host user (uid:gid 1000) so nothing runs as root.
+    user: "1000:1000"
+    # Block privilege escalation (setuid binaries can't gain new privs).
+    security_opt:
+      - no-new-privileges:true
+    # Host-side binding stays on 127.0.0.1 — the Cloudflare Tunnel is the only
+    # public entry point. Container listens on 3001 (see Dockerfile / PORT).
+    ports:
+      - "127.0.0.1:8900:3001"
+    environment:
+      # HTTP/WebSocket port inside the container (matches the Dockerfile EXPOSE).
+      - PORT=3001
+      # Google Cast custom receiver app id — read from .env. Empty is fine;
+      # the "Open TV view" browser fallback works without a registered app.
+      - CAST_RECEIVER_APP_ID=${CAST_RECEIVER_APP_ID:-}
+      # Base URL used to build the QR join link shown on the TV. Exposed
+      # publicly via Cloudflare Tunnel at setlist.mooseflip.com.
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-https://setlist.mooseflip.com}
+      # Path to a real YT Music question bank (produced by
+      # scripts/questionbank/build_bank.py). Falls back to the bundled
+      # sample-bank fixture if unset or the file doesn't exist.
+      - QUESTION_BANK_PATH=${QUESTION_BANK_PATH:-}
+      - CLIP_START_SECONDS=${CLIP_START_SECONDS:-30}
+      - CLIP_DURATION_SECONDS=${CLIP_DURATION_SECONDS:-20}

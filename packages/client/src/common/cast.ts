@@ -7,7 +7,7 @@
 // verbatim; only CAST_NAMESPACE differs. The retry ladder in start() and the
 // 8s SDK-load timeout are load-bearing, not defensive noise: the receiver is
 // frequently not listening when the first message goes out.
-import { CAST_NAMESPACE } from '@music-trivia/shared';
+import { CAST_NAMESPACE } from '@setlist/shared';
 
 const SENDER_SDK = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
 

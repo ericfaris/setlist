@@ -2,7 +2,7 @@
 // games, plus an invariant checker (including the spectator-safe leak check)
 // meant to be run after every mutation.
 import { expect } from 'vitest';
-import { BOARD_ROWS, POINT_VALUES, type QuestionBank } from '@music-trivia/shared';
+import { BOARD_ROWS, POINT_VALUES, type QuestionBank } from '@setlist/shared';
 import { GameEngine } from '../engine.js';
 import { makeRng } from '../rng.js';
 import { sampleQuestionBank } from '../../questions/bank.js';

@@ -7,7 +7,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@music-trivia/shared': new URL('../shared/src/index.ts', import.meta.url).pathname,
+      '@setlist/shared': new URL('../shared/src/index.ts', import.meta.url).pathname,
     },
   },
 });

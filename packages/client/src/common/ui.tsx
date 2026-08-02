@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { POINT_VALUES, type BoardState, type PublicRoom } from '@music-trivia/shared';
+import { POINT_VALUES, type BoardState, type PublicRoom } from '@setlist/shared';
 import { useGame } from './useGame.js';
 
 export const nameOf = (pub: PublicRoom, id: string | null) =>

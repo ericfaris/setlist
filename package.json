@@ -1,7 +1,7 @@
 {
-  "name": "music-trivia",
+  "name": "setlist",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Real-time multiplayer music trivia — Jeopardy-style, cast to your TV",
   "workspaces": [
     "packages/shared",
@@ -9,10 +9,10 @@
     "packages/client"
   ],
   "scripts": {
-    "build": "npm run build -w @music-trivia/shared && npm run build -w @music-trivia/client && npm run build -w @music-trivia/server",
+    "build": "npm run build -w @setlist/shared && npm run build -w @setlist/client && npm run build -w @setlist/server",
     "dev": "concurrently -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:server": "npm run dev -w @music-trivia/server",
-    "dev:client": "npm run dev -w @music-trivia/client",
+    "dev:server": "npm run dev -w @setlist/server",
+    "dev:client": "npm run dev -w @setlist/client",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
   },

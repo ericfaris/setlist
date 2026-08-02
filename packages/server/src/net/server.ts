@@ -1,7 +1,7 @@
 // Socket.IO wiring: clients send intents, the server validates via the engine
 // and broadcasts spectator-safe projections. Also schedules the clip timer.
 import type { Server, Socket } from 'socket.io';
-import type { Ack, ClientToServer, ServerToClient } from '@music-trivia/shared';
+import type { Ack, ClientToServer, ServerToClient } from '@setlist/shared';
 import { toPrivateState, toPublicRoom } from '../engine/project.js';
 import type { RoomManager, RoomRuntime } from './rooms.js';
 

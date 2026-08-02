@@ -67,7 +67,7 @@ export default function App() {
     <div className="app center">
       <div className="stack" style={{ width: '100%' }}>
         <div className="center-text stack">
-          <div className="title">🎵 Music Trivia</div>
+          <div className="title">🎵 Setlist</div>
           <div className="muted">Buzz in on your phone · board on the TV</div>
         </div>
         {g.error && <ErrorBanner message={g.error} />}
@@ -272,10 +272,35 @@ function JoinFlow({ onBack }: { onBack: () => void }) {
 }
 
 // ---------------------------------------------------------------- In-game
+/** Persistent code + TV-connection status, visible on every in-game screen
+ * (not just Lobby) — without this, a TV that drops mid-game (tab closed,
+ * refreshed, network blip) can't be reconnected without the host already
+ * remembering the 4-digit code from memory. */
+function TvStatusStrip({ pub, isHost }: { pub: import('@setlist/shared').PublicRoom; isHost: boolean }) {
+  if (pub.phase === 'LOBBY') return null; // Lobby already shows its own code + status.
+  return (
+    <div className="spread small" style={{ opacity: 0.85 }}>
+      <span className="pill">Code {pub.code}</span>
+      <span className={pub.castConnected ? 'muted' : 'banner'}>
+        {pub.castConnected ? '📺 TV connected' : '⚠️ TV disconnected'}
+        {isHost && !pub.castConnected && (
+          <button
+            style={{ marginLeft: 8 }}
+            onClick={() => window.open(`/receiver.html?code=${pub.code}`, '_blank', 'noopener')}
+          >
+            Reopen TV view
+          </button>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function InGame() {
   const g = useGame();
   const pub = g.pub!;
   const priv = g.priv!;
+  const isHost = !!pub.players.find((p) => p.id === priv.playerId)?.isHost;
 
   // Whole rounds pass with nobody touching their phone — keep the screen awake
   // or a sleeping device can't buzz.
@@ -285,6 +310,7 @@ function InGame() {
     <div className="app stack">
       {!g.connected && <div className="banner">Reconnecting…</div>}
       {g.error && <ErrorBanner message={g.error} />}
+      <TvStatusStrip pub={pub} isHost={isHost} />
       {pub.phase === 'LOBBY' && <Lobby pub={pub} priv={priv} />}
       {pub.phase === 'BOARD' && <BoardPick pub={pub} priv={priv} />}
       {(pub.phase === 'PLAYING' || pub.phase === 'LOCKED') && (

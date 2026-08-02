@@ -53,6 +53,7 @@ export interface PublicActiveQuestion {
   revealed: boolean;
   answer: PublicAnswer | null; // null until revealed === true
   playbackError: string | null;
+  timedOut: boolean;
   // NOTE: videoId deliberately absent — see PrivateState.receiverPlayback.
 }
 

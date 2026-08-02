@@ -18,7 +18,7 @@ import type {
   PublicAnswer,
   PublicRoom,
   ReceiverPlayback,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 import type { GameEngine } from './engine.js';
 
 export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
@@ -41,6 +41,7 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       revealed: a.revealed,
       answer,
       playbackError: a.playbackError,
+      timedOut: a.timedOut,
       // videoId intentionally omitted — see PrivateState.receiverPlayback.
     };
   }
@@ -115,9 +116,12 @@ export function toPrivateState(
 
   const p = room.players.find((pl) => pl.id === playerId);
   const isHost = p?.isHost ?? false;
-  // The host needs the answer to judge against, before anyone else sees it.
+  // The host needs the answer to judge against — but not a moment before
+  // someone (possibly the host themselves) has actually locked in. Sending it
+  // any earlier would spoil the clip for a host who is also playing.
+  const questionLocked = !!a && (a.lockedPlayerId !== null || a.revealed);
   const hostAnswer: PublicAnswer | null =
-    isHost && a ? { title: a.question.title, artist: a.question.artist } : null;
+    isHost && questionLocked ? { title: a!.question.title, artist: a!.question.artist } : null;
 
   return {
     playerId,

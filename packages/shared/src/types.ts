@@ -1,5 +1,5 @@
 // ============================================================================
-// Music Trivia — canonical server-side game-state data model.
+// Setlist — canonical server-side game-state data model.
 // This is the single source of truth. Clients render projections of it with
 // hidden fields stripped (see projection.ts). Nothing in here is broadcast
 // verbatim; the projectors decide what each surface may see.
@@ -66,6 +66,10 @@ export interface ActiveQuestion {
   /** Bumped every time playback should (re)start; the receiver watches it. */
   playToken: number;
   playbackError: string | null; // the receiver reported the video won't embed/play
+  /** True only when the clip ran out with nobody buzzing (clipExpired()) — not
+   * set for a host skip, which reveals via the same phase transition. Drives
+   * the "times up" sound on the receiver. */
+  timedOut: boolean;
 }
 
 export interface RoomSettings {

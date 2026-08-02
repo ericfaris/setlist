@@ -7,7 +7,7 @@
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
-import { validateQuestionBank, type QuestionBank } from '@music-trivia/shared';
+import { validateQuestionBank, type QuestionBank } from '@setlist/shared';
 import sampleBank from './sample-bank.json' with { type: 'json' };
 
 /** Same 3-levels-up trick as env.rootEnvPath(): stable under tsx (src/) and node (dist/). */

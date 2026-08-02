@@ -1,20 +1,56 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import QRCode from 'qrcode';
-import type { PublicRoom } from '@music-trivia/shared';
+import type { PublicRoom } from '@setlist/shared';
 import { useGame } from '../common/useGame.js';
 import { store } from '../common/store.js';
 import { BoardGrid, ClipBar, nameOf } from '../common/ui.js';
 import { YouTubePlayer } from './YouTubePlayer.js';
 
-/** Small corner tag so a host can tell which build is live on the TV. */
+/** Small corner tag so a host can tell which build is live on the TV. Pinned
+ * bottom-left so it never collides with the persistent join QR (bottom-right). */
 function VersionTag({ version }: { version: string }) {
   if (!version) return null;
   return (
     <div
       className="muted"
-      style={{ position: 'fixed', bottom: '1vh', right: '1vw', fontSize: '1vw', opacity: 0.5 }}
+      style={{ position: 'fixed', bottom: '1vh', left: '1vw', fontSize: '1vw', opacity: 0.5 }}
     >
       v{version}
+    </div>
+  );
+}
+
+/** Persistent join QR + code, bottom-right, on every screen except the Lobby
+ * (which already shows a big one) — so latecomers can join mid-game without
+ * the host having to back out to the lobby screen. */
+function MiniJoinQr({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
+  const [qr, setQr] = useState('');
+  useEffect(() => {
+    const url = `${baseUrl}/?code=${pub.code}`;
+    QRCode.toDataURL(url, { width: 200, margin: 1 })
+      .then(setQr)
+      .catch(() => undefined);
+  }, [baseUrl, pub.code]);
+  if (!qr) return null;
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: '1vh',
+        right: '1vw',
+        background: 'rgba(255,255,255,0.92)',
+        borderRadius: 8,
+        padding: '0.5vw',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '0.2vw',
+      }}
+    >
+      <img src={qr} alt="Scan to join" style={{ width: '7vw', minWidth: 56, maxWidth: 110 }} />
+      <div style={{ fontSize: '0.9vw', color: '#111', fontWeight: 700, letterSpacing: '0.05em' }}>
+        {pub.code}
+      </div>
     </div>
   );
 }
@@ -44,7 +80,7 @@ export default function App() {
     const castError = (window as any).__castInitError as string | null;
     content = (
       <div className="tv center">
-        <div className="huge">🎵 MUSIC TRIVIA</div>
+        <div className="huge">🎵 SETLIST</div>
         <div className="sub">Waiting for a room…</div>
         {castError && (
           <div className="muted" style={{ fontSize: '1.2vw', color: 'red', marginTop: '1vw' }}>
@@ -72,6 +108,7 @@ export default function App() {
       {content}
       {/* Always mounted: the player instance must survive every phase change. */}
       <YouTubePlayer playback={g.priv?.receiverPlayback ?? null} />
+      {g.pub && g.pub.phase !== 'LOBBY' && <MiniJoinQr pub={g.pub} baseUrl={baseUrl} />}
       <VersionTag version={appVersion} />
     </>
   );
@@ -107,7 +144,7 @@ function LobbyTV({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
 
   return (
     <div className="tv">
-      <div className="brand">🎵 MUSIC TRIVIA</div>
+      <div className="brand">🎵 SETLIST</div>
       <div className="spread" style={{ flex: 1 }}>
         <div className="stack center-text">
           <div style={{ fontSize: '2vw' }} className="muted">
@@ -136,7 +173,21 @@ function LobbyTV({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
   );
 }
 
+/** Fire-and-forget one-shot SFX. Swallows autoplay-policy rejections — the
+ * same class of restriction the YouTube clip already works around with its
+ * "Tap to enable audio" cover; a missed board/times-up chime isn't worth
+ * blocking on that gesture too. */
+function playOneShot(src: string): void {
+  new Audio(src).play().catch(() => undefined);
+}
+
 function BoardTV({ pub }: { pub: PublicRoom }) {
+  // Fires once each time the board is (re)populated with dollar amounts —
+  // BoardTV mounts fresh on every phase transition into BOARD.
+  useEffect(() => {
+    playOneShot('/sounds/board.mp3');
+  }, []);
+
   return (
     <div className="tv">
       <div className="brand">PICK A SQUARE</div>
@@ -175,6 +226,11 @@ function PlayingTV({ pub }: { pub: PublicRoom }) {
 
 function RevealTV({ pub }: { pub: PublicRoom }) {
   const a = pub.active;
+  // Only for an actual clip-expiry timeout — not a host skip, which reveals
+  // via the same phase transition but isn't "ran out of time".
+  useEffect(() => {
+    if (a?.timedOut) playOneShot('/sounds/times-up.mp3');
+  }, [a?.timedOut]);
   if (!a) return null;
   return (
     <div className="tv">

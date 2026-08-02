@@ -1,6 +1,6 @@
 // Board layout from the question bank.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BOARD_COLUMNS, BOARD_ROWS, POINT_VALUES } from '@music-trivia/shared';
+import { BOARD_COLUMNS, BOARD_ROWS, POINT_VALUES } from '@setlist/shared';
 import type { GameEngine } from '../engine.js';
 import {
   addPlayers,

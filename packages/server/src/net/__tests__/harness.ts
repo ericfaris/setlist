@@ -9,7 +9,7 @@ import {
   type PrivateState,
   type PublicRoom,
   type QuestionBank,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 import { sampleQuestionBank } from '../../questions/bank.js';
 import { RoomManager } from '../rooms.js';
 import { attachSocketServer } from '../server.js';

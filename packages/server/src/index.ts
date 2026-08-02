@@ -10,7 +10,7 @@ import {
   DEFAULT_CLIP_DURATION_SECONDS,
   DEFAULT_CLIP_START_SECONDS,
   SOCKET_PATH,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 import { loadQuestionBank } from './questions/bank.js';
 import { RoomManager } from './net/rooms.js';
 import { attachSocketServer } from './net/server.js';
@@ -77,7 +77,9 @@ if (existsSync(clientDist)) {
       res.setHeader('Cache-Control', 'no-store');
       res.sendFile(join(clientDist, 'receiver.html'));
     } else {
-      res.redirect(302, `/receiver.html?v=${DEPLOY_VERSION}`);
+      const params = new URLSearchParams(req.query as Record<string, string>);
+      params.set('v', DEPLOY_VERSION);
+      res.redirect(302, `/receiver.html?${params.toString()}`);
     }
   });
   app.use(express.static(clientDist));
@@ -103,5 +105,5 @@ const io = new Server(httpServer, {
 attachSocketServer(io, rooms);
 
 httpServer.listen(PORT, () => {
-  console.log(`[startup] Music Trivia v${APP_VERSION} on :${PORT} (socket ${SOCKET_PATH})`);
+  console.log(`[startup] Setlist v${APP_VERSION} on :${PORT} (socket ${SOCKET_PATH})`);
 });

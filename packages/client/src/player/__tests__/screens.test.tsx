@@ -74,18 +74,20 @@ describe('HostJudge', () => {
   const lockedPub = () =>
     makePub({ phase: 'LOCKED', active: makeActive({ lockedPlayerId: 'p3' }) });
 
-  it('renders the answer and the four verdicts for the host', () => {
+  it('does not show the answer until the host taps to reveal it', () => {
     const priv = makePriv({
       playerId: 'p1',
       isHost: true,
       hostAnswer: { title: 'Take On Me', artist: 'a-ha' },
     });
     render(<HostJudge pub={lockedPub()} priv={priv} />);
-    expect(screen.getByText('Take On Me')).toBeInTheDocument();
-    expect(screen.getByText('a-ha')).toBeInTheDocument();
+    expect(screen.queryByText('Take On Me')).not.toBeInTheDocument();
     for (const label of ['Both ✓', 'Title only', 'Artist only', 'Both ✗']) {
       expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
     }
+    fireEvent.click(screen.getByRole('button', { name: /Reveal answer/ }));
+    expect(screen.getByText('Take On Me')).toBeInTheDocument();
+    expect(screen.getByText('a-ha')).toBeInTheDocument();
   });
 
   it('renders nothing for a non-host', () => {

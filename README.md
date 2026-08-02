@@ -1,4 +1,4 @@
-# Music Trivia
+# Setlist
 
 A real-time multiplayer party game: a Jeopardy-style board of **categories ×
 point values**, where each category is one of your own **YouTube Music
@@ -15,9 +15,9 @@ A TypeScript monorepo (npm workspaces):
 
 | Package | What |
 |---|---|
-| `@music-trivia/shared` | Canonical game-state data model, wire protocol, spectator-safe projection types, and the question-bank schema + validator. |
-| `@music-trivia/server` | Node + Socket.IO. Server-authoritative game engine (pure, deterministic), question-bank loader with a bundled sample fallback, room registry. |
-| `@music-trivia/client` | React + Vite. Two builds from one codebase — the **player** UI (`index.html`) and the TV **receiver** UI (`receiver.html`). |
+| `@setlist/shared` | Canonical game-state data model, wire protocol, spectator-safe projection types, and the question-bank schema + validator. |
+| `@setlist/server` | Node + Socket.IO. Server-authoritative game engine (pure, deterministic), question-bank loader with a bundled sample fallback, room registry. |
+| `@setlist/client` | React + Vite. Two builds from one codebase — the **player** UI (`index.html`) and the TV **receiver** UI (`receiver.html`). |
 
 The server is the single source of truth. Clients send *intents*; the server
 validates them against the engine and broadcasts spectator-safe projections.
@@ -154,6 +154,78 @@ Output goes to `question-bank/bank.json` (gitignored — it's your data). The
 server reads `QUESTION_BANK_PATH` and falls back to the bundled sample bank,
 logging a warning, if the file is missing or invalid.
 
+### Community playlists and AI categories
+
+Pull songs from playlists you don't own, and let Claude invent the board
+categories instead of using one category per playlist.
+
+```bash
+# a public playlist by id or pasted share URL (repeatable)
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --community-playlist PLxxxxxxxx
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --community-playlist "https://music.youtube.com/playlist?list=PLxxxxxxxx"
+
+# search YT Music's community playlists and take the top match (repeatable)
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --community-search "80s power ballads"
+
+# your library PLUS community sources, several decades, 8 AI categories
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --community-search "60s classics" --community-search "70s classic rock" \
+    --categories 8 --max-categories 15
+```
+
+`--community-playlist` accepts a bare id (`PLxxxx`, `OLAK5uy_xxxx`, …) or any of
+the usual URL forms: `music.youtube.com/playlist?list=…`,
+`youtube.com/playlist?list=…`, `…/watch?v=…&list=…`, `youtu.be/…?list=…`, and
+`music.youtube.com/browse/VLPL…`. A leading `VL` is stripped — YT Music's browse
+ids are `VL` + the playlist id, and the API wants the bare id.
+
+`--community-search` takes the **first** usable result in YT Music's own
+relevance order — no extra ranking — and logs which playlist it picked (title,
+author, id, item count) so you can sanity-check it. A search that finds nothing
+logs a warning and the run continues with the other sources.
+
+**Your library is always included alongside any community sources** — the two
+are additive, not either/or. `--playlists` still narrows *which* of your own
+playlists are used; pass `--no-library` if you want to build from community
+sources only, excluding your library entirely.
+
+**AI categories** need `ANTHROPIC_API_KEY`; the model comes from
+`ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`). It's one batch call per
+run, sending only song titles and artists — never video ids — and the AI only
+groups, titles and flags songs `ytmusicapi` already returned. It never invents a
+song. `--categories N` (default 5, matching the board's 5 columns) sets how many
+categories to ask for; `--max-categories` still caps how many *source playlists*
+are read. The prompt also asks the model to favor **decade diversity** — if
+enough 1960s/1970s songs are in the pool, it's told to carve out a category for
+them rather than letting everything cluster into whichever decades happen to
+dominate your library — so pairing this with `--community-search "60s hits"` /
+`"70s classics"` (or similar) actually surfaces that era instead of it getting
+diluted into a "Classic Rock" catch-all.
+
+**Content filtering** is two-layer. Anything YT Music flags `isExplicit` is
+dropped before the AI ever sees it — that's the authoritative, non-negotiable
+filter. The AI then does a second conservative pass over titles and artists, and
+anything it flags is dropped too.
+
+**Fallback**: no key, no `anthropic` package, an API error, or an unparseable
+reply → the builder prints why and falls back to one category per playlist. It
+never fails the run. `--no-ai` forces that path.
+
+Both env vars are read by the **Python builder only** — the Node server has no
+Anthropic dependency.
+
+**Embeddable pre-check**: some official/label-uploaded videos have embedding
+disabled by the rights holder — they can't play in *any* embedded player,
+anywhere, on any site (not a bug, a per-video YouTube setting). Set
+`YOUTUBE_API_KEY` (a plain Google/YouTube Data API v3 key, separate from the
+`ytmusicapi` OAuth/browser auth above) and the builder checks every pooled
+song's real embeddable status before it ever reaches the board, dropping any
+that would fail. Without the key this step is skipped and a bad video instead
+surfaces as an in-game "Embedding disabled" error the host can Skip past.
+
 ### Schema
 
 ```json
@@ -184,7 +256,10 @@ logging a warning, if the file is missing or invalid.
 ```
 
 - `id`s are derived (`cat_<playlistId>`, `q_<videoId>`) so a rebuild doesn't
-  churn them.
+  churn them. An AI-generated category is `cat_ai_<slug>_<hash>` instead, from a
+  slug of its title plus a short SHA-1 of it — also derived, also stable.
+- `playlistId` is the single source playlist a category came from, or `null` for
+  an AI-generated category (which pulls from many playlists at once).
 - `value` is a **suggestion**. The engine assigns the authoritative value from
   the board row when it lays the game out — don't "fix" the redundancy.
 - `startSeconds: null` means "use `CLIP_START_SECONDS`". Hand-editable per song.

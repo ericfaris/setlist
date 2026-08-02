@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { PrivateState, PublicRoom } from '@music-trivia/shared';
+import type { PrivateState, PublicRoom } from '@setlist/shared';
 import { store } from '../common/store.js';
 import { BoardGrid, ClipBar, nameOf } from '../common/ui.js';
 
@@ -189,17 +189,24 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
   );
 }
 
-/** Host-only judging panel: the answer, who buzzed, and the four verdicts. */
+/** Host-only judging panel: the answer, who buzzed, and the four verdicts.
+ * The answer is not shown the instant someone locks in — including when the
+ * host is the one who buzzed — the host must tap to reveal it, so whoever
+ * buzzed gets a real chance to answer out loud first instead of the screen
+ * spoiling it for them. */
 export function HostJudge({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   const active = pub.active;
+  const questionKey = active ? `${active.cell.categoryIndex}:${active.cell.rowIndex}` : null;
+  const [revealedFor, setRevealedFor] = useState<string | null>(null);
   if (!active || !priv.isHost) return null;
   const judge = (titleCorrect: boolean, artistCorrect: boolean) =>
     void store.judge({ titleCorrect, artistCorrect });
+  const revealed = revealedFor === questionKey;
 
   return (
     <div className="card stack">
       <div className="h2">🔒 {nameOf(pub, active.lockedPlayerId)} buzzed in</div>
-      {priv.hostAnswer && (
+      {revealed && priv.hostAnswer ? (
         <div className="notice stack" style={{ gap: 4 }}>
           <div className="small muted">The answer</div>
           <div>
@@ -207,6 +214,10 @@ export function HostJudge({ pub, priv }: { pub: PublicRoom; priv: PrivateState }
           </div>
           <div className="muted">{priv.hostAnswer.artist}</div>
         </div>
+      ) : (
+        <button onClick={() => setRevealedFor(questionKey)}>
+          👁 Reveal answer — wait until they've answered out loud
+        </button>
       )}
       <div className="grid2">
         <button className="good" onClick={() => judge(true, true)}>
@@ -281,13 +292,17 @@ export function GameOver({ pub, priv }: { pub: PublicRoom; priv: PrivateState })
 
 // ---------------------------------------------------------------- Paused
 export function Paused({ pub }: { pub: PublicRoom }) {
+  const reason = pub.pause.reason;
+  const who = pub.pause.waitingForPlayerId ? nameOf(pub, pub.pause.waitingForPlayerId) : null;
   return (
     <div className="card center-text stack">
       <div className="title">⏸ Paused</div>
       <div className="muted">
-        {pub.pause.reason === 'CAST_DROPPED'
+        {reason === 'CAST_DROPPED'
           ? 'Reconnecting to the TV…'
-          : 'Waiting for the host to come back…'}
+          : who
+            ? `Waiting for ${who} to reconnect…`
+            : 'Waiting to resume…'}
       </div>
     </div>
   );

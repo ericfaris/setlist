@@ -30,11 +30,19 @@ export interface BankQuestion {
 }
 
 export interface BankCategory {
-  /** `cat_<playlistId>` */
+  /**
+   * `cat_<playlistId>` for a category that mirrors one source playlist, or
+   * `cat_ai_<slug>_<hash6>` for an AI-generated cross-cutting category.
+   * Derived either way, so a rebuild doesn't churn ids.
+   */
   id: string;
-  /** Playlist name → board column header. */
+  /** Board column header — a playlist name, or an AI-chosen theme. */
   title: string;
-  playlistId: string;
+  /**
+   * The single source playlist, when the category maps 1:1 to one. `null` (or
+   * absent) for AI-generated categories, which pull from many playlists.
+   */
+  playlistId?: string | null;
   questions: BankQuestion[];
 }
 
@@ -79,8 +87,11 @@ export function validateQuestionBank(x: unknown): ValidateBankResult {
     if (!isObject(rawCat)) return { ok: false, error: `category ${i} is not an object` };
     if (!isNonEmptyString(rawCat['id'])) return { ok: false, error: `category ${i} missing id` };
     if (!isNonEmptyString(rawCat['title'])) return { ok: false, error: `category ${i} missing title` };
-    if (!isNonEmptyString(rawCat['playlistId'])) {
-      return { ok: false, error: `category ${i} missing playlistId` };
+    // Optional since AI-generated categories draw from many playlists: absent,
+    // null and a non-empty string all pass; '', 0 and {} still fail.
+    const playlistId = rawCat['playlistId'];
+    if (playlistId !== undefined && playlistId !== null && !isNonEmptyString(playlistId)) {
+      return { ok: false, error: `category ${i} has an invalid playlistId` };
     }
     const questions = rawCat['questions'];
     if (!Array.isArray(questions) || questions.length === 0) {

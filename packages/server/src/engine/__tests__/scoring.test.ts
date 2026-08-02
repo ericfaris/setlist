@@ -1,7 +1,7 @@
 // Scoring: title = half the cell value, artist = the other half, both wrong =
 // minus half (when penalties are on). Exercised across the whole ladder.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { POINT_VALUES } from '@music-trivia/shared';
+import { POINT_VALUES } from '@setlist/shared';
 import { checkInvariants, resetInvariantMemory, startedGame } from './harness.js';
 
 beforeEach(resetInvariantMemory);

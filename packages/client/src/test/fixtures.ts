@@ -5,7 +5,7 @@ import {
   type PublicActiveQuestion,
   type PublicPlayer,
   type PublicRoom,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 
 export function makePlayer(overrides: Partial<PublicPlayer> & { id: string }): PublicPlayer {
   return {
@@ -54,6 +54,7 @@ export function makeActive(
     revealed: false,
     answer: null,
     playbackError: null,
+    timedOut: false,
     ...overrides,
   };
 }

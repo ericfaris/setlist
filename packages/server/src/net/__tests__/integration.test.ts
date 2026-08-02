@@ -49,11 +49,12 @@ describe('a full question over WebSockets', () => {
     expect(host.priv?.receiverPlayback).toBeNull();
     expect(guest.priv?.receiverPlayback).toBeNull();
 
-    // only the host gets the answer, and only they see it before the reveal
-    expect(host.priv?.hostAnswer?.title).toBeTruthy();
+    // nobody gets the answer yet — not even the host — while the clip is
+    // still playing and nobody has locked in. Sending it earlier than a lock
+    // would spoil the clip for a host who also plays.
+    expect(host.priv?.hostAnswer).toBeNull();
     expect(guest.priv?.hostAnswer).toBeNull();
     expect(host.pub?.active?.answer).toBeNull();
-    expect(JSON.stringify(guest.pub)).not.toContain(host.priv!.hostAnswer!.title);
 
     // buzz
     expect(guest.priv?.canBuzz).toBe(true);
@@ -66,6 +67,12 @@ describe('a full question over WebSockets', () => {
     // the music stops on the TV
     expect(receiver.priv?.receiverPlayback?.paused).toBe(true);
     expect(guest.priv?.canBuzz).toBe(false);
+
+    // only once someone is locked in does the host get the answer — still
+    // never the guest
+    expect(host.priv?.hostAnswer?.title).toBeTruthy();
+    expect(guest.priv?.hostAnswer).toBeNull();
+    expect(JSON.stringify(guest.pub)).not.toContain(host.priv!.hostAnswer!.title);
 
     // judge
     expect(await host.emit('judge:answer', { titleCorrect: true, artistCorrect: false })).toEqual({

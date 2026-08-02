@@ -10,7 +10,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@music-trivia/shared': resolve(__dirname, '../shared/src/index.ts'),
+      '@setlist/shared': resolve(__dirname, '../shared/src/index.ts'),
     },
   },
   build: {

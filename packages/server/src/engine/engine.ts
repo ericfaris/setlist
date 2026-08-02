@@ -1,5 +1,5 @@
 // ============================================================================
-// Music Trivia game engine — pure, server-authoritative state machine.
+// Setlist game engine — pure, server-authoritative state machine.
 // One GameEngine instance owns exactly one GameRoom. Net/timer side effects
 // live outside; this file is deterministic given { rng, bank, now }.
 //
@@ -29,7 +29,7 @@ import {
   type QuestionBank,
   type RoomPhase,
   type RoomSettings,
-} from '@music-trivia/shared';
+} from '@setlist/shared';
 import { makeRng, type Rng } from './rng.js';
 
 export type EngineResult = { ok: true } | { ok: false; error: string };
@@ -234,16 +234,17 @@ export class GameEngine {
   }
 
   /**
-   * Board layout: take bank categories with at least BOARD_ROWS questions, use
-   * the first BOARD_COLUMNS of them, and pick BOARD_ROWS questions per category
-   * with the room's seeded RNG (so a rematch reshuffles). A smaller bank yields
-   * a narrower board rather than a refusal to start — a user's first real bank
-   * may well be small.
+   * Board layout: take bank categories with at least BOARD_ROWS questions,
+   * shuffle them and use the first BOARD_COLUMNS, then pick BOARD_ROWS
+   * questions per category — both with the room's seeded RNG, so every game
+   * (not just song order within a category) gets a fresh board. A smaller
+   * bank yields a narrower board rather than a refusal to start — a user's
+   * first real bank may well be small.
    */
   private layOutBoard(): BoardState | null {
     const eligible = this.bank.categories.filter((c) => c.questions.length >= BOARD_ROWS);
     if (eligible.length === 0) return null;
-    const chosen = eligible.slice(0, BOARD_COLUMNS);
+    const chosen = this.rng.shuffle(eligible.slice()).slice(0, BOARD_COLUMNS);
 
     this.questions = new Map();
     const cells: BoardCell[] = [];
@@ -302,6 +303,7 @@ export class GameEngine {
       revealed: false,
       playToken: prevToken + 1,
       playbackError: null,
+      timedOut: false,
     };
     this.room.phase = 'PLAYING';
     return ok;
@@ -419,6 +421,7 @@ export class GameEngine {
     const active = this.room.active;
     if (!active) return err('No clip is playing.');
     active.revealed = true;
+    active.timedOut = true;
     this.room.phase = 'REVEAL';
     return ok;
   }

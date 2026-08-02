@@ -6,7 +6,7 @@
 // The iframe is deliberately invisible (see .ytstage/.ytshield in styles.css):
 // the YouTube player chrome prints the song title, which is the answer.
 import { useEffect, useRef, useState } from 'react';
-import type { ReceiverPlayback } from '@music-trivia/shared';
+import type { ReceiverPlayback } from '@setlist/shared';
 import { store } from '../common/store.js';
 
 declare global {

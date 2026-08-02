@@ -1,6 +1,6 @@
 {
-  "name": "@music-trivia/server",
-  "version": "0.1.0",
+  "name": "@setlist/server",
+  "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@music-trivia/shared": "*",
+    "@setlist/shared": "*",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"

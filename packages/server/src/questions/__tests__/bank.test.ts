@@ -1,7 +1,7 @@
 // The committed sample fixture is what makes the app runnable with no
 // YT Music credentials — so it has to stay valid and big enough for a board.
 import { describe, expect, it } from 'vitest';
-import { BOARD_COLUMNS, BOARD_ROWS, validateQuestionBank } from '@music-trivia/shared';
+import { BOARD_COLUMNS, BOARD_ROWS, validateQuestionBank } from '@setlist/shared';
 import sampleBank from '../sample-bank.json' with { type: 'json' };
 import { loadQuestionBank, sampleQuestionBank } from '../bank.js';
 

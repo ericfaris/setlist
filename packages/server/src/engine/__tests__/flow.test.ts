@@ -1,6 +1,6 @@
 // Phase transitions, LOBBY through GAME_OVER.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BOARD_COLUMNS, BOARD_ROWS } from '@music-trivia/shared';
+import { BOARD_COLUMNS, BOARD_ROWS } from '@setlist/shared';
 import {
   addPlayers,
   checkInvariants,
