@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+question-bank/*.json
+!question-bank/.gitkeep
+.venv/
+__pycache__/
+scripts/questionbank/oauth.json
+scripts/questionbank/browser.json
+coverage/

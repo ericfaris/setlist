@@ -1,0 +1,409 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-02T00:00:00Z",
+  "source": "fixture",
+  "categories": [
+    {
+      "id": "cat_PLfixture80s",
+      "title": "80s Bangers",
+      "playlistId": "PLfixture80s",
+      "questions": [
+        {
+          "id": "q_dQw4w9WgXcQ",
+          "title": "Never Gonna Give You Up",
+          "artist": "Rick Astley",
+          "videoId": "dQw4w9WgXcQ",
+          "album": null,
+          "durationSeconds": 213,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_djV11Xbc914",
+          "title": "Take On Me",
+          "artist": "a-ha",
+          "videoId": "djV11Xbc914",
+          "album": null,
+          "durationSeconds": 225,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_Zi_XLOBDo_Y",
+          "title": "Billie Jean",
+          "artist": "Michael Jackson",
+          "videoId": "Zi_XLOBDo_Y",
+          "album": null,
+          "durationSeconds": 294,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_btPJPFnesV4",
+          "title": "Eye of the Tiger",
+          "artist": "Survivor",
+          "videoId": "btPJPFnesV4",
+          "album": null,
+          "durationSeconds": 245,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_lDK9QqIzhwk",
+          "title": "Livin' on a Prayer",
+          "artist": "Bon Jovi",
+          "videoId": "lDK9QqIzhwk",
+          "album": null,
+          "durationSeconds": 250,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_qeMFqkcPYcg",
+          "title": "Sweet Dreams (Are Made of This)",
+          "artist": "Eurythmics",
+          "videoId": "qeMFqkcPYcg",
+          "album": null,
+          "durationSeconds": 216,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    },
+    {
+      "id": "cat_PLfixtureClassicRock",
+      "title": "Classic Rock",
+      "playlistId": "PLfixtureClassicRock",
+      "questions": [
+        {
+          "id": "q_fJ9rUzIMcZQ",
+          "title": "Bohemian Rhapsody",
+          "artist": "Queen",
+          "videoId": "fJ9rUzIMcZQ",
+          "album": null,
+          "durationSeconds": 355,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_1w7OgIMMRc4",
+          "title": "Sweet Child o' Mine",
+          "artist": "Guns N' Roses",
+          "videoId": "1w7OgIMMRc4",
+          "album": null,
+          "durationSeconds": 356,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_09839DpTctU",
+          "title": "Hotel California",
+          "artist": "Eagles",
+          "videoId": "09839DpTctU",
+          "album": null,
+          "durationSeconds": 391,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_rY0WxgSXdEE",
+          "title": "Another One Bites the Dust",
+          "artist": "Queen",
+          "videoId": "rY0WxgSXdEE",
+          "album": null,
+          "durationSeconds": 215,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_QkF3oxziUI4",
+          "title": "Stairway to Heaven",
+          "artist": "Led Zeppelin",
+          "videoId": "QkF3oxziUI4",
+          "album": null,
+          "durationSeconds": 482,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_pAgnJDJN4VA",
+          "title": "Back in Black",
+          "artist": "AC/DC",
+          "videoId": "pAgnJDJN4VA",
+          "album": null,
+          "durationSeconds": 255,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    },
+    {
+      "id": "cat_PLfixture90sRock",
+      "title": "90s & 00s Rock",
+      "playlistId": "PLfixture90sRock",
+      "questions": [
+        {
+          "id": "q_hTWKbfoikeg",
+          "title": "Smells Like Teen Spirit",
+          "artist": "Nirvana",
+          "videoId": "hTWKbfoikeg",
+          "album": null,
+          "durationSeconds": 301,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_YlUKcNNmywk",
+          "title": "Californication",
+          "artist": "Red Hot Chili Peppers",
+          "videoId": "YlUKcNNmywk",
+          "album": null,
+          "durationSeconds": 329,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_CD-E-LDc384",
+          "title": "Enter Sandman",
+          "artist": "Metallica",
+          "videoId": "CD-E-LDc384",
+          "album": null,
+          "durationSeconds": 331,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_eVTXPUF4Oz4",
+          "title": "In the End",
+          "artist": "Linkin Park",
+          "videoId": "eVTXPUF4Oz4",
+          "album": null,
+          "durationSeconds": 216,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_SBjQ9tuuTJQ",
+          "title": "The Pretender",
+          "artist": "Foo Fighters",
+          "videoId": "SBjQ9tuuTJQ",
+          "album": null,
+          "durationSeconds": 269,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_gGdGFtwCNBE",
+          "title": "Mr. Brightside",
+          "artist": "The Killers",
+          "videoId": "gGdGFtwCNBE",
+          "album": null,
+          "durationSeconds": 222,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    },
+    {
+      "id": "cat_PLfixturePop",
+      "title": "Pop Megahits",
+      "playlistId": "PLfixturePop",
+      "questions": [
+        {
+          "id": "q_JGwWNGJdvx8",
+          "title": "Shape of You",
+          "artist": "Ed Sheeran",
+          "videoId": "JGwWNGJdvx8",
+          "album": null,
+          "durationSeconds": 233,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_OPf0YbXqDm0",
+          "title": "Uptown Funk",
+          "artist": "Mark Ronson, Bruno Mars",
+          "videoId": "OPf0YbXqDm0",
+          "album": null,
+          "durationSeconds": 269,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_nfWlot6h_JM",
+          "title": "Shake It Off",
+          "artist": "Taylor Swift",
+          "videoId": "nfWlot6h_JM",
+          "album": null,
+          "durationSeconds": 219,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_e-ORhEE9VVg",
+          "title": "Blank Space",
+          "artist": "Taylor Swift",
+          "videoId": "e-ORhEE9VVg",
+          "album": null,
+          "durationSeconds": 231,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_0KSOMA3QBU0",
+          "title": "Dark Horse",
+          "artist": "Katy Perry, Juicy J",
+          "videoId": "0KSOMA3QBU0",
+          "album": null,
+          "durationSeconds": 215,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_kJQP7kiw5Fk",
+          "title": "Despacito",
+          "artist": "Luis Fonsi, Daddy Yankee",
+          "videoId": "kJQP7kiw5Fk",
+          "album": null,
+          "durationSeconds": 281,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    },
+    {
+      "id": "cat_PLfixtureOneHit",
+      "title": "One-Hit Wonders",
+      "playlistId": "PLfixtureOneHit",
+      "questions": [
+        {
+          "id": "q_L_jWHffIx5E",
+          "title": "All Star",
+          "artist": "Smash Mouth",
+          "videoId": "L_jWHffIx5E",
+          "album": null,
+          "durationSeconds": 200,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_8UVNT4wvIGY",
+          "title": "Somebody That I Used to Know",
+          "artist": "Gotye, Kimbra",
+          "videoId": "8UVNT4wvIGY",
+          "album": null,
+          "durationSeconds": 244,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_1lyu1KKwC74",
+          "title": "Bitter Sweet Symphony",
+          "artist": "The Verve",
+          "videoId": "1lyu1KKwC74",
+          "album": null,
+          "durationSeconds": 349,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_6NXnxTNIWkc",
+          "title": "What's Up?",
+          "artist": "4 Non Blondes",
+          "videoId": "6NXnxTNIWkc",
+          "album": null,
+          "durationSeconds": 295,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_xGytDsqkQY8",
+          "title": "Closing Time",
+          "artist": "Semisonic",
+          "videoId": "xGytDsqkQY8",
+          "album": null,
+          "durationSeconds": 275,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_XZVpR3Pk-r8",
+          "title": "Tainted Love",
+          "artist": "Soft Cell",
+          "videoId": "XZVpR3Pk-r8",
+          "album": null,
+          "durationSeconds": 158,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    },
+    {
+      "id": "cat_PLfixtureBallads",
+      "title": "Sing-Along Ballads",
+      "playlistId": "PLfixtureBallads",
+      "questions": [
+        {
+          "id": "q_3JWTaaS7LdU",
+          "title": "I Will Always Love You",
+          "artist": "Whitney Houston",
+          "videoId": "3JWTaaS7LdU",
+          "album": null,
+          "durationSeconds": 273,
+          "value": 100,
+          "startSeconds": null
+        },
+        {
+          "id": "q_hLQl3WQQoQ0",
+          "title": "Someone Like You",
+          "artist": "Adele",
+          "videoId": "hLQl3WQQoQ0",
+          "album": null,
+          "durationSeconds": 285,
+          "value": 200,
+          "startSeconds": null
+        },
+        {
+          "id": "q_2Vv-BfVoq4g",
+          "title": "Perfect",
+          "artist": "Ed Sheeran",
+          "videoId": "2Vv-BfVoq4g",
+          "album": null,
+          "durationSeconds": 263,
+          "value": 300,
+          "startSeconds": null
+        },
+        {
+          "id": "q_450p7goxZqg",
+          "title": "All of Me",
+          "artist": "John Legend",
+          "videoId": "450p7goxZqg",
+          "album": null,
+          "durationSeconds": 269,
+          "value": 400,
+          "startSeconds": null
+        },
+        {
+          "id": "q_A_MjCqQoLLA",
+          "title": "Hey Jude",
+          "artist": "The Beatles",
+          "videoId": "A_MjCqQoLLA",
+          "album": null,
+          "durationSeconds": 425,
+          "value": 500,
+          "startSeconds": null
+        },
+        {
+          "id": "q_FTQbiNvZqaY",
+          "title": "Africa",
+          "artist": "Toto",
+          "videoId": "FTQbiNvZqaY",
+          "album": null,
+          "durationSeconds": 295,
+          "value": 500,
+          "startSeconds": null
+        }
+      ]
+    }
+  ]
+}
