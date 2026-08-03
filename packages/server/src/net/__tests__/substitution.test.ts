@@ -48,15 +48,17 @@ function uniformBank(): QuestionBank {
 
 const ALT_1 = 'altoneaaaaa';
 const ALT_2 = 'alttwobbbbb';
+const ALT_3 = 'altthreecc';
 
-/** Two good candidates plus noise the matcher must throw away. */
+/** Three good candidates, ranked ALT_1 > ALT_2 > ALT_3, plus noise the
+ * matcher must throw away. */
 function goodResults(): YouTubeSearchResult[] {
   return [
     { videoId: 'junkccccccc', title: 'Completely Different Song', channelTitle: 'Some Channel' },
     { videoId: ALT_1, title: `${TITLE} (Official Audio)`, channelTitle: `${ARTIST} - Topic` },
     { videoId: 'karaokedddd', title: `${TITLE} (Karaoke Version)`, channelTitle: `${ARTIST} - Topic` },
     { videoId: ALT_2, title: `${TITLE} (Lyric Video)`, channelTitle: `${ARTIST} Fan Uploads` },
-    { videoId: 'thirdeeeeee', title: TITLE, channelTitle: ARTIST },
+    { videoId: ALT_3, title: TITLE, channelTitle: ARTIST },
   ];
 }
 
@@ -113,7 +115,7 @@ describe('runtime song substitution', () => {
     closeAll();
   }, 20000);
 
-  it('recovers on the second alternate, then falls back to exactly today behavior', async () => {
+  it('tries three alternates, then auto-skips with no host action', async () => {
     const yt = fakeYouTube(goodResults());
     const { receiver, host, guest, closeAll } = await boot(yt);
 
@@ -134,7 +136,17 @@ describe('runtime song substitution', () => {
     expect(yt.queries).toHaveLength(1);
     expect(receiver.priv?.receiverPlayback?.videoId).toBe(ALT_2);
 
-    // third failure -> exhausted; exactly the pre-feature state
+    // third failure -> candidate 3, still no further search
+    receiver.socket.emit('receiver:playbackError', {
+      message: 'Embedding disabled (150)',
+      playToken: receiver.priv!.receiverPlayback!.playToken,
+    });
+    await tick();
+    expect(yt.queries).toHaveLength(1);
+    expect(receiver.priv?.receiverPlayback?.videoId).toBe(ALT_3);
+
+    // fourth failure -> exhausted; every alternate also failed, so the room
+    // auto-skips (reveals) instead of waiting on the host to notice and Skip
     receiver.socket.emit('receiver:playbackError', {
       message: 'Embedding disabled (150)',
       playToken: receiver.priv!.receiverPlayback!.playToken,
@@ -142,15 +154,9 @@ describe('runtime song substitution', () => {
     await tick();
     expect(yt.queries).toHaveLength(1);
     expect(host.pub?.active?.retrying).toBe(false);
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
-    expect(host.pub?.phase).toBe('PLAYING');
-    expect(receiver.priv?.receiverPlayback?.videoId).toBe(ALT_2);
-    expectNoLeak(host, guest, yt.results);
-
-    // ...and the host's manual Skip still works, unchanged
-    expect(await host.emit('question:skip', {})).toEqual({ ok: true, data: {} });
-    await tick();
     expect(host.pub?.phase).toBe('REVEAL');
+    expect(host.pub?.active?.revealed).toBe(true);
+    expectNoLeak(host, guest, yt.results);
     closeAll();
   }, 20000);
 
@@ -168,7 +174,8 @@ describe('runtime song substitution', () => {
     expect(yt.queries).toEqual([EXPECTED_QUERY]);
     expect(receiver.priv?.receiverPlayback?.videoId).toBe(original); // unchanged
     expect(host.pub?.active?.retrying).toBe(false);
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
+    // no plausible candidate at all -> nothing left to try -> auto-reveal
+    expect(host.pub?.phase).toBe('REVEAL');
     expectNoLeak(host, guest, results);
     closeAll();
   }, 20000);
@@ -260,12 +267,12 @@ describe('runtime song substitution', () => {
     closeAll();
   }, 20000);
 
-  it('enforces the 2-attempt cap server-side against a spamming receiver', async () => {
+  it('enforces the 3-attempt cap server-side against a spamming receiver', async () => {
     const yt = fakeYouTube(goodResults());
     const { receiver, host, guest, closeAll } = await boot(yt);
 
     const seen = new Set<string>();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       receiver.socket.emit('receiver:playbackError', {
         message: 'Embedding disabled (150)',
         playToken: receiver.priv!.receiverPlayback!.playToken,
@@ -276,15 +283,16 @@ describe('runtime song substitution', () => {
     }
 
     expect(yt.queries).toHaveLength(1); // exactly one search, ever
-    expect(seen.size).toBeLessThanOrEqual(2);
-    expect([...seen]).toEqual([ALT_1, ALT_2]);
+    expect(seen.size).toBeLessThanOrEqual(3);
+    expect([...seen]).toEqual([ALT_1, ALT_2, ALT_3]);
     expect(host.pub?.active?.retrying).toBe(false);
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
+    // every alternate also failed -> auto-revealed, not left waiting on the host
+    expect(host.pub?.phase).toBe('REVEAL');
     expectNoLeak(host, guest, yt.results);
     closeAll();
   }, 20000);
 
-  it('falls back cleanly when the search returns nothing', async () => {
+  it('auto-reveals immediately when the search returns nothing', async () => {
     const yt = fakeYouTube([]);
     const { receiver, host, closeAll } = await boot(yt);
     const original = receiver.priv!.receiverPlayback!.videoId;
@@ -292,12 +300,11 @@ describe('runtime song substitution', () => {
     receiver.socket.emit('receiver:playbackError', { message: 'Embedding disabled (150)' });
     await tick();
 
+    // no candidates were ever found, so there's nothing to try -> reveal now
     expect(host.pub?.active?.retrying).toBe(false);
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
     expect(receiver.priv?.receiverPlayback?.videoId).toBe(original);
-    expect(await host.emit('question:skip', {})).toEqual({ ok: true, data: {} });
-    await tick();
     expect(host.pub?.phase).toBe('REVEAL');
+    expect(host.pub?.active?.revealed).toBe(true);
     closeAll();
   }, 20000);
 
@@ -311,11 +318,10 @@ describe('runtime song substitution', () => {
     await tick();
 
     expect(host.pub?.active?.retrying).toBe(false);
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
     expect(receiver.priv?.receiverPlayback?.videoId).toBe(original);
-    expect(await host.emit('question:skip', {})).toEqual({ ok: true, data: {} });
-    await tick();
+    // a rejected search yields no candidates -> nothing to try -> reveal now
     expect(host.pub?.phase).toBe('REVEAL');
+    expect(host.pub?.active?.revealed).toBe(true);
     closeAll();
   }, 20000);
 

@@ -232,10 +232,13 @@ error the host can Skip past.
 per-domain embed allowlists, so some videos still fail live with error 101/150.
 When that happens the Node server (which now also reads `YOUTUBE_API_KEY`)
 searches the YouTube Data API v3 for an alternate upload of the same song,
-verifies the title/artist plausibly match, and plays it — up to 2 attempts, with
-a "finding another version…" indicator and buzzers disabled throughout. If both
-fail, or the key is unset, it falls back to the host's manual Skip exactly as
-before. Costs 100 quota units per failed song against the 10,000/day default.
+verifies the title/artist plausibly match, and plays it — up to 3 attempts, with
+a "finding another version…" indicator and buzzers disabled throughout. If all
+three also fail, the question auto-skips (reveals) with no host action needed —
+there's nothing left to usefully Skip past. If `YOUTUBE_API_KEY` is unset,
+substitution never kicks in and a failure falls straight to the host's manual
+Skip, exactly as before this feature existed. Costs 100 quota units per failed
+song against the 10,000/day default.
 
 ### Schema
 

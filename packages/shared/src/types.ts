@@ -116,5 +116,5 @@ export const MIN_PLAYERS = 1;
 export const MAX_PLAYERS = 10;
 export const DEFAULT_CLIP_START_SECONDS = 30;
 export const DEFAULT_CLIP_DURATION_SECONDS = 20;
-/** Alternate uploads tried automatically before falling back to manual Skip. */
-export const MAX_SUBSTITUTION_ATTEMPTS = 2;
+/** Alternate uploads tried automatically before auto-skipping the question. */
+export const MAX_SUBSTITUTION_ATTEMPTS = 3;

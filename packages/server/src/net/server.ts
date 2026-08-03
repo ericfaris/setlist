@@ -84,14 +84,25 @@ export function attachSocketServer(
 
   /**
    * Runtime song substitution. The engine holds all state and enforces the
-   * 2-attempt cap; this function only performs the I/O and hands the result
+   * 3-attempt cap; this function only performs the I/O and hands the result
    * back. Mirrors reconcileTimer's shape: side effect out here, decision in the
    * engine. Never throws — every failure path ends in exhaustRetries().
    */
   async function trySubstitute(runtime: RoomRuntime): Promise<void> {
     const engine = runtime.engine;
     const begun = engine.beginRetry();
-    if (!begun.ok) return; // cap hit, wrong phase, already retrying
+    if (!begun.ok) {
+      // Every alternate we're allowed to try has already failed to play —
+      // there's nothing left to usefully Skip past, so auto-reveal instead
+      // of leaving the room waiting on the host to notice. The other
+      // failure reasons (wrong phase, already retrying) are real races and
+      // must NOT force a reveal — only the cap being hit should.
+      if (begun.error === 'Out of substitution attempts.') {
+        engine.exhaustRetries();
+        broadcast(runtime);
+      }
+      return;
+    }
     broadcast(runtime); // players see "finding another version…"
 
     if (begun.needSearch) {

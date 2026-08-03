@@ -327,7 +327,7 @@ export class GameEngine {
       timedOut: false,
       // A brand-new active question resets the whole substitution state — this
       // is the only place retryAttempts goes back to 0, which is what makes the
-      // 2-attempt cap per-question.
+      // 3-attempt cap per-question.
       retrying: false,
       retryAttempts: 0,
       retryCandidates: [],
@@ -576,7 +576,12 @@ export class GameEngine {
     return ok;
   }
 
-  /** Give up on substitution — land in exactly the pre-feature state. */
+  /**
+   * Give up on substitution. Every alternate we tried also failed to play, so
+   * there's nothing left for a host to usefully Skip past — auto-reveal
+   * instead, exactly like skipQuestion(), so the game keeps moving without
+   * requiring anyone to notice and click Skip.
+   */
   exhaustRetries(): EngineResult {
     const active = this.room.active;
     if (!active) return err('No question in play.');
@@ -584,6 +589,10 @@ export class GameEngine {
     active.playbackError = active.lastPlaybackErrorMessage ?? active.playbackError;
     active.retryCandidates = [];
     active.retryId = null;
+    active.lockedPlayerId = null;
+    active.lockedAt = null;
+    active.revealed = true;
+    this.room.phase = 'REVEAL';
     return ok;
   }
 

@@ -131,7 +131,7 @@ describe('game flow', () => {
     expect(engine.skipQuestion(seats[0]!.id)).toEqual({ ok: true });
   });
 
-  it('runs a substitution: begin -> resolve -> play, capped at two attempts', () => {
+  it('runs a substitution: begin -> resolve -> play, capped at three attempts, then auto-reveals', () => {
     const { engine, seats } = startedGame(2071, 2);
     engine.selectCell(seats[0]!.id, 0, 0);
     const active = engine.room.active!;
@@ -152,9 +152,9 @@ describe('game flow', () => {
     expect(engine.buzz(seats[1]!.id)).toEqual({ ok: false, error: 'Finding another version…' });
     checkInvariants(engine);
 
-    expect(engine.resolveRetrySearch(begun.retryId, ['sub1aaaaaaa', 'sub2bbbbbbb'])).toEqual({
-      ok: true,
-    });
+    expect(
+      engine.resolveRetrySearch(begun.retryId, ['sub1aaaaaaa', 'sub2bbbbbbb', 'sub3ccccccc']),
+    ).toEqual({ ok: true });
     expect(engine.playSubstitute()).toEqual({ ok: true });
     expect(active.substituteVideoId).toBe('sub1aaaaaaa');
     expect(active.retryAttempts).toBe(1);
@@ -174,14 +174,26 @@ describe('game flow', () => {
     expect(active.substituteVideoId).toBe('sub2bbbbbbb');
     expect(active.retryAttempts).toBe(2);
 
-    // the cap: no third attempt, ever
+    // attempt 3 needs no search either
+    expect(engine.reportPlaybackError('Embedding disabled (150)')).toEqual({ ok: true });
+    const third = engine.beginRetry();
+    expect(third.ok).toBe(true);
+    if (!third.ok) throw new Error('unreachable');
+    expect(third.needSearch).toBe(false);
+    expect(third.excludeVideoIds).toEqual([originalVideoId, 'sub2bbbbbbb']);
+    expect(engine.playSubstitute()).toEqual({ ok: true });
+    expect(active.substituteVideoId).toBe('sub3ccccccc');
+    expect(active.retryAttempts).toBe(3);
+
+    // the cap: no fourth attempt, ever
     expect(engine.reportPlaybackError('Embedding disabled (150)')).toEqual({ ok: true });
     expect(engine.beginRetry()).toEqual({ ok: false, error: 'Out of substitution attempts.' });
     expect(engine.exhaustRetries()).toEqual({ ok: true });
     expect(active.retrying).toBe(false);
     expect(active.playbackError).toBe('Embedding disabled (150)');
-    expect(engine.room.phase).toBe('PLAYING');
-    expect(engine.skipQuestion(seats[0]!.id)).toEqual({ ok: true });
+    // every alternate also failed to play -> auto-reveal, no host action needed
+    expect(engine.room.phase).toBe('REVEAL');
+    expect(active.revealed).toBe(true);
     checkInvariants(engine);
   });
 
