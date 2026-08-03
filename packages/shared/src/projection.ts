@@ -90,6 +90,10 @@ export interface PrivateState {
   /** Host-only. Now populated from the moment the round is ARMED (the host picked
    *  the song, so hiding it is pointless) — but still ONLY for the host socket. */
   hostAnswer: PublicAnswer | null;
+  /** Host-only, same gate as hostAnswer. Lets the host (re)open the YouTube
+   *  Music link at any point while armed/locked — server-driven so it survives
+   *  a reload/reconnect rather than depending on client-local tap-time state. */
+  hostVideoId: string | null;
   /** Host-only, and only while phase === 'SETLIST'. Null for everyone else, always. */
   setlist: HostSetlistSection[] | null;
 }

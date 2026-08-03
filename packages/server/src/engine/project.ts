@@ -111,6 +111,7 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
       score: 0,
       canBuzz: false,
       hostAnswer: null,
+      hostVideoId: null,
       setlist: null,
     };
   }
@@ -122,6 +123,10 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
   // to `a !== null`: that would hand the answer to every player.
   const hostAnswer: PublicAnswer | null =
     isHost && a ? { title: a.question.title, artist: a.question.artist } : null;
+  // Same gate as hostAnswer — lets the host reopen the YouTube Music link at
+  // any point while armed/locked, server-driven so a reload/reconnect doesn't
+  // strand them without it.
+  const hostVideoId: string | null = isHost && a ? a.question.videoId : null;
   // Host-only, and only while browsing: the full setlist, answers and all.
   const setlist =
     isHost && room.phase === 'SETLIST' && room.setlist ? toHostSetlist(room.setlist) : null;
@@ -133,6 +138,7 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
     score: p?.score ?? 0,
     canBuzz: engine.canBuzz(playerId),
     hostAnswer,
+    hostVideoId,
     setlist,
   };
 }

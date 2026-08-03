@@ -178,11 +178,6 @@ function playOneShot(src: string): void {
 }
 
 function SetlistTV({ pub }: { pub: PublicRoom }) {
-  // Fires once each time the room lands back on the setlist — SetlistTV mounts
-  // fresh on every phase transition into SETLIST.
-  useEffect(() => {
-    playOneShot('/sounds/board.mp3');
-  }, []);
   const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
 
   return (

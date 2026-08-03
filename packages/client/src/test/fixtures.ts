@@ -82,6 +82,7 @@ export function makePriv(overrides: Partial<PrivateState> = {}): PrivateState {
     score: 0,
     canBuzz: true,
     hostAnswer: null,
+    hostVideoId: null,
     setlist: null,
     ...overrides,
   };

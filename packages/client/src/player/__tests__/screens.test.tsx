@@ -79,6 +79,26 @@ describe('BuzzScreen', () => {
     spy.mockRestore();
   });
 
+  it('shows the host the title, artist and a YouTube Music link while armed', () => {
+    render(
+      <BuzzScreen
+        pub={makePub()}
+        priv={makePriv({
+          playerId: 'p1',
+          isHost: true,
+          canBuzz: false,
+          hostAnswer: { title: 'Song 0-0', artist: 'Artist 0-0' },
+          hostVideoId: 'vid00xxxxxx',
+        })}
+      />,
+    );
+    expect(screen.getByText('Song 0-0')).toBeInTheDocument();
+    expect(screen.getByText('Artist 0-0')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
+    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid00xxxxxx');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
   it('gives the host a manual reveal while armed', () => {
     const spy = vi.spyOn(store, 'revealQuestion').mockResolvedValue(true);
     render(
@@ -115,22 +135,13 @@ describe('SetlistScreen', () => {
     expect(screen.getByText('Artist 0-1')).toBeInTheDocument();
   });
 
-  it('reveals title, artist and a YouTube Music link when a song is tapped', () => {
-    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Song 1-2/ }));
-    expect(screen.getByText('Song 1-2')).toBeInTheDocument();
-    expect(screen.getByText('Artist 1-2')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
-    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid12xxxxxx');
-    expect(link).toHaveAttribute('target', '_blank');
-  });
-
-  it('arms the round with the cued song id', () => {
+  it('arms the round immediately when a song is tapped — no separate confirm step', () => {
     const spy = vi.spyOn(store, 'startSong').mockResolvedValue(true);
     render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
     fireEvent.click(screen.getByRole('button', { name: /Song 0-1/ }));
-    fireEvent.click(screen.getByRole('button', { name: /Start round — arm buzzers/ }));
     expect(spy).toHaveBeenCalledWith('s0q1');
+    // no "Start round" button ever exists — tapping the row is the whole action
+    expect(screen.queryByRole('button', { name: /Start round/ })).not.toBeInTheDocument();
     spy.mockRestore();
   });
 

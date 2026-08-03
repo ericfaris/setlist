@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { youtubeMusicUrl, type HostSetlistSong, type PrivateState, type PublicRoom } from '@setlist/shared';
+import { useMemo, useState } from 'react';
+import { youtubeMusicUrl, type PrivateState, type PublicRoom } from '@setlist/shared';
 import { store } from '../common/store.js';
 import { nameOf } from '../common/ui.js';
 
@@ -99,14 +99,11 @@ export function SetlistScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateSta
   const self = me(pub, priv);
   const isHost = !!self?.isHost;
   const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
-  const [cued, setCued] = useState<HostSetlistSong | null>(null);
   const [query, setQuery] = useState('');
-
-  // Returning to the setlist after a round must start from the list, never a
-  // stale cue panel.
-  useEffect(() => {
-    if (pub.phase !== 'SETLIST') setCued(null);
-  }, [pub.phase]);
+  // Tapping a song arms it immediately (one step, not cue-then-confirm) — this
+  // just tracks which row is mid-flight so a fast double-tap can't race two
+  // starts, and surfaces a failure (e.g. someone already played it) inline.
+  const [arming, setArming] = useState<string | null>(null);
 
   const sections = priv.setlist;
   const filtered = useMemo(() => {
@@ -129,38 +126,6 @@ export function SetlistScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateSta
     return (
       <div className="stack">
         <div className="card center-text">🎧 {hostName} is choosing a song…</div>
-        <ScoreStrip pub={pub} priv={priv} />
-      </div>
-    );
-  }
-
-  if (cued) {
-    const sectionTitle =
-      sections?.find((sec) => sec.songs.some((song) => song.id === cued.id))?.title ?? '';
-    return (
-      <div className="stack">
-        <div className="card stack">
-          <div>
-            <b>{cued.title}</b>
-          </div>
-          <div className="muted">{cued.artist}</div>
-          <div className="small muted">{sectionTitle}</div>
-          <a
-            className="primary"
-            href={youtubeMusicUrl(cued.videoId)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            ▶ Open in YouTube Music
-          </a>
-          <button className="primary" onClick={() => void store.startSong(cued.id)}>
-            🔔 Start round — arm buzzers
-          </button>
-          <button className="ghost small" onClick={() => setCued(null)}>
-            ← Back to setlist
-          </button>
-          <div className="small muted">Play it out loud first, then arm the buzzers.</div>
-        </div>
         <ScoreStrip pub={pub} priv={priv} />
       </div>
     );
@@ -199,9 +164,19 @@ export function SetlistScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateSta
                     </div>
                   </div>
                 ) : (
-                  <button key={song.id} className="song" onClick={() => setCued(song)}>
+                  <button
+                    key={song.id}
+                    className="song"
+                    disabled={arming === song.id}
+                    onClick={() => {
+                      setArming(song.id);
+                      void store.startSong(song.id).finally(() => setArming(null));
+                    }}
+                  >
                     <b>{song.title}</b>
-                    <div className="muted small">{song.artist}</div>
+                    <div className="muted small">
+                      {arming === song.id ? 'Arming…' : song.artist}
+                    </div>
                   </button>
                 ),
               )}
@@ -267,6 +242,24 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
         </div>
         <div className="small muted">Name that song… and the artist!</div>
       </div>
+
+      {isHost && priv.hostAnswer && priv.hostVideoId && (
+        <div className="card stack" style={{ gap: 4 }}>
+          <div className="small muted">You picked this one</div>
+          <div>
+            <b>{priv.hostAnswer.title}</b>
+          </div>
+          <div className="muted">{priv.hostAnswer.artist}</div>
+          <a
+            className="primary"
+            href={youtubeMusicUrl(priv.hostVideoId)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            ▶ Open in YouTube Music
+          </a>
+        </div>
+      )}
 
       <button
         className={cls}
