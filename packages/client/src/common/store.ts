@@ -27,6 +27,10 @@ const LS_NAME = 'sl:name';
 class GameStore {
   private socket: Socket;
   private listeners = new Set<Listener>();
+  /** The host's YouTube Music tab, opened via window.open() (not a plain link)
+   * specifically so we keep a handle to close it — the only way to actually
+   * stop playback in a cross-origin tab we never embed or control otherwise. */
+  private songWindow: Window | null = null;
   /** Set once the transport has connected at least once, so we can tell a
    * fresh connect apart from a reconnect after a drop. */
   private hasConnectedBefore = false;
@@ -155,6 +159,19 @@ class GameStore {
     const res = await this.emit('host:transfer', { playerId });
     if (!res.ok) this.patch({ error: res.error });
     return res.ok;
+  }
+
+  // ---- YouTube Music tab ----
+  openSongWindow(url: string) {
+    this.songWindow = window.open(url, '_blank');
+  }
+  closeSongWindow() {
+    try {
+      this.songWindow?.close();
+    } catch {
+      // cross-origin tabs the user navigated away from can refuse close(); ignore.
+    }
+    this.songWindow = null;
   }
 
   // ---- rounds / play ----

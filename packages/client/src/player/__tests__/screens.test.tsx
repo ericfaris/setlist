@@ -102,9 +102,7 @@ describe('BuzzScreen', () => {
     );
     expect(screen.getByText('Song 0-0')).toBeInTheDocument();
     expect(screen.getByText('Artist 0-0')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
-    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid00xxxxxx');
-    expect(link).toHaveAttribute('target', '_blank');
+    expect(screen.getByRole('button', { name: /Open in YouTube Music/ })).toBeInTheDocument();
   });
 
   it('gives the host a manual reveal while armed', () => {
@@ -227,8 +225,9 @@ describe('OnDeckScreen', () => {
     expect(screen.queryByRole('button', { name: /arm buzzers/ })).not.toBeInTheDocument();
   });
 
-  it('gives the host the song, a YouTube Music link and the arm button', () => {
+  it('gives the host the song and a single tap that opens YouTube Music and arms the buzzers', () => {
     const spy = vi.spyOn(store, 'startSong').mockResolvedValue(true);
+    const openSpy = vi.spyOn(store, 'openSongWindow').mockImplementation(() => {});
     render(
       <OnDeckScreen
         pub={deckPub()}
@@ -242,14 +241,12 @@ describe('OnDeckScreen', () => {
     );
     expect(screen.getByText('Song 0-2')).toBeInTheDocument();
     expect(screen.getByText('Artist 0-2')).toBeInTheDocument();
-    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
-    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid02xxxxxx');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
 
-    fireEvent.click(screen.getByRole('button', { name: /arm buzzers/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Open in YouTube Music.*arms the buzzers/ }));
+    expect(openSpy).toHaveBeenCalledWith('https://music.youtube.com/watch?v=vid02xxxxxx');
     expect(spy).toHaveBeenCalledWith('s0q2');
     spy.mockRestore();
+    openSpy.mockRestore();
   });
 });
 

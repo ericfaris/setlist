@@ -1,3 +1,9 @@
+@font-face {
+  font-family: 'Original Salmon';
+  src: url('/fonts/original-salmon.otf') format('opentype');
+  font-display: swap;
+}
+
 :root {
   --bg: #0b1020;
   --bg-2: #121933;
@@ -173,3 +179,7 @@ a.primary {
 .tv .big { font-size: 6vw; font-weight: 900; text-align: center; }
 .tv .huge { font-size: 9vw; font-weight: 900; text-align: center; }
 .tv .sub { font-size: 3vw; font-weight: 700; color: var(--muted); text-align: center; }
+.tv .reveal-title,
+.tv .reveal-artist {
+  font-family: 'Original Salmon', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}

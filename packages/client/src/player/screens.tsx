@@ -7,16 +7,18 @@ function me(pub: PublicRoom, priv: PrivateState) {
   return pub.players.find((p) => p.id === priv.playerId) ?? null;
 }
 
-/** Every in-game screen carries the scores; a party game with hidden scores is no fun. */
+/** Every in-game screen carries the scores; a party game with hidden scores is
+ * no fun. The host never plays, so — like the TV scoreboard — they're left off. */
 export function ScoreStrip({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
-  const sorted = [...pub.players].sort((a, b) => b.score - a.score || a.joinOrder - b.joinOrder);
+  const sorted = [...pub.players]
+    .filter((p) => !p.isHost)
+    .sort((a, b) => b.score - a.score || a.joinOrder - b.joinOrder);
   return (
     <div className="stack" style={{ gap: 6 }}>
       {sorted.map((p) => (
         <div key={p.id} className={`scorerow${p.id === priv.playerId ? ' me' : ''}`}>
           <span>
             {p.displayName}
-            {p.isHost ? ' 👑' : ''}
             {!p.connected ? ' 📴' : ''}
             {p.pendingJoin ? ' ⏳' : ''}
           </span>
@@ -265,24 +267,21 @@ export function OnDeckScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateStat
             <b>{song.title}</b>
           </div>
           <div className="muted">{song.artist}</div>
-          <a
-            className="primary"
-            href={youtubeMusicUrl(song.videoId)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            ▶ Open in YouTube Music
-          </a>
           <button
             className="primary"
             disabled={arming}
+            // Opening the song IS starting the round — one tap, not two. We
+            // open it via window.open() (not a plain link) so we keep a handle
+            // to the tab and can close it later when the host judges or moves on.
             onClick={() => {
+              store.openSongWindow(youtubeMusicUrl(song.videoId));
               setArming(true);
               void store.startSong(song.songId).finally(() => setArming(false));
             }}
           >
-            {arming ? 'Arming…' : '🔔 Start round — arm buzzers'}
+            ▶ Open in YouTube Music — arms the buzzers
           </button>
+          {arming && <div className="small muted">Arming…</div>}
         </div>
       )}
 
@@ -349,14 +348,12 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
             <b>{priv.hostAnswer.title}</b>
           </div>
           <div className="muted">{priv.hostAnswer.artist}</div>
-          <a
+          <button
             className="primary"
-            href={youtubeMusicUrl(priv.hostVideoId)}
-            target="_blank"
-            rel="noopener noreferrer"
+            onClick={() => store.openSongWindow(youtubeMusicUrl(priv.hostVideoId!))}
           >
             ▶ Open in YouTube Music
-          </a>
+          </button>
         </div>
       )}
 
@@ -394,8 +391,10 @@ export function HostJudge({ pub, priv }: { pub: PublicRoom; priv: PrivateState }
   const questionKey = active ? active.songId : null;
   const [revealedFor, setRevealedFor] = useState<string | null>(null);
   if (!active || !priv.isHost) return null;
-  const judge = (titleCorrect: boolean, artistCorrect: boolean) =>
+  const judge = (titleCorrect: boolean, artistCorrect: boolean) => {
+    store.closeSongWindow();
     void store.judge({ titleCorrect, artistCorrect });
+  };
   const revealed = revealedFor === questionKey;
 
   return (
@@ -456,7 +455,13 @@ export function Reveal({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
         )}
       </div>
       {isHost && (
-        <button className="primary" onClick={() => void store.nextQuestion()}>
+        <button
+          className="primary"
+          onClick={() => {
+            store.closeSongWindow();
+            void store.nextQuestion();
+          }}
+        >
           Next →
         </button>
       )}

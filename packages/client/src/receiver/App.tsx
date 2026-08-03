@@ -116,20 +116,20 @@ export default function App() {
 }
 
 function Scores({ pub }: { pub: PublicRoom }) {
-  const best = Math.max(0, ...pub.players.map((p) => p.score));
+  // The host never plays — showing them on the TV scoreboard alongside actual
+  // contestants is just confusing. Player phones still show the host in the
+  // roster (via ScoreStrip) since a player might want to know who's running
+  // the game; the TV only cares about who's competing.
+  const contestants = pub.players.filter((p) => !p.pendingJoin && !p.isHost);
+  const best = Math.max(0, ...contestants.map((p) => p.score));
   return (
     <div className="scores">
-      {pub.players
-        .filter((p) => !p.pendingJoin)
-        .map((p) => (
-          <div key={p.id} className={`scorecard${p.score === best && best > 0 ? ' leader' : ''}`}>
-            <div className="nm">
-              {p.displayName}
-              {p.isHost ? ' 👑' : ''}
-            </div>
-            <div className="sc">{p.score}</div>
-          </div>
-        ))}
+      {contestants.map((p) => (
+        <div key={p.id} className={`scorecard${p.score === best && best > 0 ? ' leader' : ''}`}>
+          <div className="nm">{p.displayName}</div>
+          <div className="sc">{p.score}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -258,8 +258,8 @@ function RevealTV({ pub }: { pub: PublicRoom }) {
         <div className="brand">{a.value} pts</div>
       </div>
       <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
-        <div className="big">{a.answer?.title ?? '—'}</div>
-        <div className="sub">{a.answer?.artist ?? ''}</div>
+        <div className="big reveal-title">{a.answer?.title ?? '—'}</div>
+        <div className="sub reveal-artist">{a.answer?.artist ?? ''}</div>
         {a.lockedPlayerId && a.verdict && (
           <div className="sub">
             {nameOf(pub, a.lockedPlayerId)} {a.awarded >= 0 ? `+${a.awarded}` : a.awarded}
