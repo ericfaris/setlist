@@ -250,21 +250,37 @@ function RevealTV({ pub }: { pub: PublicRoom }) {
   useEffect(() => {
     if (nobodyGotIt) playOneShot('/sounds/times-up.mp3');
   }, [a?.songId, nobodyGotIt]);
+  // Server-proxied, keyed on the public songId — the videoId that drives it
+  // never reaches this client. See /api/art in the server. A song this thin
+  // bank doesn't have art for 404s; just hide it, don't show a broken image.
+  const [artFailed, setArtFailed] = useState(false);
+  useEffect(() => setArtFailed(false), [a?.songId]);
   if (!a) return null;
+  const artUrl = `/api/art/${pub.code}/${a.songId}`;
   return (
     <div className="tv">
       <div className="spread">
         <div className="brand">{a.sectionTitle}</div>
         <div className="brand">{a.value} pts</div>
       </div>
-      <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
-        <div className="big reveal-title">{a.answer?.title ?? '—'}</div>
-        <div className="sub reveal-artist">{a.answer?.artist ?? ''}</div>
-        {a.lockedPlayerId && a.verdict && (
-          <div className="sub">
-            {nameOf(pub, a.lockedPlayerId)} {a.awarded >= 0 ? `+${a.awarded}` : a.awarded}
-          </div>
+      <div className="row reveal-row" style={{ flex: 1, alignItems: 'center', gap: '3vw' }}>
+        {!artFailed && (
+          <img
+            className="reveal-art"
+            src={artUrl}
+            alt=""
+            onError={() => setArtFailed(true)}
+          />
         )}
+        <div className="stack center-text" style={{ flex: 1 }}>
+          <div className="big reveal-title">{a.answer?.title ?? '—'}</div>
+          <div className="sub reveal-artist">{a.answer?.artist ?? ''}</div>
+          {a.lockedPlayerId && a.verdict && (
+            <div className="sub">
+              {nameOf(pub, a.lockedPlayerId)} {a.awarded >= 0 ? `+${a.awarded}` : a.awarded}
+            </div>
+          )}
+        </div>
       </div>
       <Scores pub={pub} />
     </div>

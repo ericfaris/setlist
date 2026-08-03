@@ -55,6 +55,38 @@ app.get('/api/cast-room', (_req, res) => {
   res.json({ code: rooms.getPendingCastCode() });
 });
 
+/**
+ * Album art proxy. The videoId that drives this must never reach a client —
+ * see PublicActiveQuestion / the "never puts a videoId in any surface but the
+ * host's own private state" invariant — so the receiver asks for art by the
+ * already-public (code, songId) pair, and only the server ever touches YouTube's
+ * thumbnail CDN. Only served once the song is actually revealed: same gate as
+ * the title/artist becoming public.
+ */
+app.get('/api/art/:code/:songId', async (req, res) => {
+  const room = rooms.get(req.params.code);
+  const active = room?.engine.room.active;
+  if (!active || active.songId !== req.params.songId || !active.revealed) {
+    res.status(404).end();
+    return;
+  }
+  try {
+    const upstream = await fetch(
+      `https://i.ytimg.com/vi/${encodeURIComponent(active.question.videoId)}/hqdefault.jpg`,
+    );
+    if (!upstream.ok) {
+      res.status(502).end();
+      return;
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.setHeader('Content-Type', upstream.headers.get('content-type') ?? 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+    res.send(buf);
+  } catch {
+    res.status(502).end();
+  }
+});
+
 // Serve the built client if present (player at /, receiver at /receiver.html).
 const clientDist = join(__dirname, '../../client/dist');
 const DEPLOY_VERSION = Date.now().toString(36);
