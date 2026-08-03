@@ -3,8 +3,7 @@ import QRCode from 'qrcode';
 import type { PublicRoom } from '@setlist/shared';
 import { useGame } from '../common/useGame.js';
 import { store } from '../common/store.js';
-import { BoardGrid, ClipBar, nameOf } from '../common/ui.js';
-import { YouTubePlayer } from './YouTubePlayer.js';
+import { nameOf } from '../common/ui.js';
 
 /** Small corner tag so a host can tell which build is live on the TV. Pinned
  * bottom-left so it never collides with the persistent join QR (bottom-right). */
@@ -97,17 +96,15 @@ export default function App() {
     content = <GameOverTV pub={g.pub} />;
   } else if (g.pub.phase === 'REVEAL') {
     content = <RevealTV pub={g.pub} />;
-  } else if (g.pub.phase === 'PLAYING' || g.pub.phase === 'LOCKED') {
-    content = <PlayingTV pub={g.pub} />;
+  } else if (g.pub.phase === 'ARMED' || g.pub.phase === 'LOCKED') {
+    content = <ArmedTV pub={g.pub} />;
   } else {
-    content = <BoardTV pub={g.pub} />;
+    content = <SetlistTV pub={g.pub} />;
   }
 
   return (
     <>
       {content}
-      {/* Always mounted: the player instance must survive every phase change. */}
-      <YouTubePlayer playback={g.priv?.receiverPlayback ?? null} />
       {g.pub && g.pub.phase !== 'LOBBY' && <MiniJoinQr pub={g.pub} baseUrl={baseUrl} />}
       <VersionTag version={appVersion} />
     </>
@@ -173,39 +170,45 @@ function LobbyTV({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
   );
 }
 
-/** Fire-and-forget one-shot SFX. Swallows autoplay-policy rejections — the
- * same class of restriction the YouTube clip already works around with its
- * "Tap to enable audio" cover; a missed board/times-up chime isn't worth
- * blocking on that gesture too. */
+/** Fire-and-forget one-shot SFX. Swallows autoplay-policy rejections — a TV
+ * that never got a user gesture simply plays no chime, which is not worth
+ * blocking anything on. */
 function playOneShot(src: string): void {
   new Audio(src).play().catch(() => undefined);
 }
 
-function BoardTV({ pub }: { pub: PublicRoom }) {
-  // Fires once each time the board is (re)populated with dollar amounts —
-  // BoardTV mounts fresh on every phase transition into BOARD.
+function SetlistTV({ pub }: { pub: PublicRoom }) {
+  // Fires once each time the room lands back on the setlist — SetlistTV mounts
+  // fresh on every phase transition into SETLIST.
   useEffect(() => {
     playOneShot('/sounds/board.mp3');
   }, []);
+  const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
 
   return (
     <div className="tv">
-      <div className="brand">PICK A SQUARE</div>
-      {pub.board && <BoardGrid board={pub.board} />}
+      <div className="brand">SETLIST</div>
+      <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
+        <div className="huge">🎧</div>
+        <div className="sub">{hostName} is choosing a song…</div>
+        <div className="muted" style={{ fontSize: '1.6vw' }}>
+          {pub.songsRemaining} of {pub.songsTotal} songs left
+        </div>
+      </div>
       <Scores pub={pub} />
     </div>
   );
 }
 
-function PlayingTV({ pub }: { pub: PublicRoom }) {
+function ArmedTV({ pub }: { pub: PublicRoom }) {
   const a = pub.active;
   if (!a) return null;
   const locked = pub.phase === 'LOCKED';
   return (
     <div className="tv">
       <div className="spread">
-        <div className="brand">{a.categoryTitle}</div>
-        <div className="brand">${a.value}</div>
+        <div className="brand">{a.sectionTitle}</div>
+        <div className="brand">{a.value} pts</div>
       </div>
       <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
         {locked ? (
@@ -214,13 +217,10 @@ function PlayingTV({ pub }: { pub: PublicRoom }) {
           <>
             <div className="huge">🎧</div>
             <div className="sub">Name that song… and the artist!</div>
+            <div className="sub">🔔 Buzzers live</div>
           </>
         )}
-        {a.retrying && <div className="sub">🔎 Finding another version…</div>}
-        {!a.retrying && a.playbackError && <div className="sub">⚠️ {a.playbackError}</div>}
       </div>
-      {/* No clip is actually playing mid-substitution — don't count one down. */}
-      {!a.retrying && <ClipBar startedAt={a.startedAt} durationSeconds={a.durationSeconds} />}
       <Scores pub={pub} />
     </div>
   );
@@ -228,17 +228,18 @@ function PlayingTV({ pub }: { pub: PublicRoom }) {
 
 function RevealTV({ pub }: { pub: PublicRoom }) {
   const a = pub.active;
-  // Only for an actual clip-expiry timeout — not a host skip, which reveals
-  // via the same phase transition but isn't "ran out of time".
+  // "Nobody got it": revealed with no lock and no verdict. Keyed on songId so
+  // it fires exactly once per question.
+  const nobodyGotIt = !!a && !a.lockedPlayerId && !a.verdict;
   useEffect(() => {
-    if (a?.timedOut) playOneShot('/sounds/times-up.mp3');
-  }, [a?.timedOut]);
+    if (nobodyGotIt) playOneShot('/sounds/times-up.mp3');
+  }, [a?.songId, nobodyGotIt]);
   if (!a) return null;
   return (
     <div className="tv">
       <div className="spread">
-        <div className="brand">{a.categoryTitle}</div>
-        <div className="brand">${a.value}</div>
+        <div className="brand">{a.sectionTitle}</div>
+        <div className="brand">{a.value} pts</div>
       </div>
       <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
         <div className="big">{a.answer?.title ?? '—'}</div>

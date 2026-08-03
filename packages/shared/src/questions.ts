@@ -13,20 +13,30 @@ export interface BankQuestion {
   title: string;
   /** Primary artist string (multiple artists joined with ', '). Also an ANSWER. */
   artist: string;
-  /** YouTube video id. Receiver-only: a player who saw it could look it up. */
+  /**
+   * YouTube video id. HOST-ONLY: the host needs it to build the YouTube Music
+   * link they play the song from. It is never sent to another player or to the
+   * TV — a player who saw it could simply look the song up.
+   */
   videoId: string;
   album: string | null;
-  /** May be null — ytmusicapi doesn't always supply it. Used only to clamp the clip offset. */
+  /** May be null — ytmusicapi doesn't always supply it. Unused by the app. */
   durationSeconds: number | null;
   /**
-   * Suggested board value. The engine OVERRIDES this with the ladder value for
-   * the row it lays the question out in (POINT_VALUES[rowIndex]); it is kept in
-   * the file purely so a hand-edited bank reads sensibly. Do not "fix" the
-   * redundancy by removing it — the builder writes it.
+   * Suggested value. The engine IGNORES this entirely — scoring is a flat
+   * SONG_POINT_VALUE per song. It is kept in the file because the builder
+   * writes it and the validator still requires it; the on-disk bank format is
+   * deliberately unchanged. Do not "fix" the redundancy by removing it.
    */
   value: number;
-  /** Hand-tunable clip start. null = use CLIP_START_SECONDS. */
+  /** Legacy hand-tunable clip start. Unused by the app; still accepted on disk. */
   startSeconds: number | null;
+}
+
+/** Native YT Music deep link. No embed restrictions apply — this is the whole
+ *  point of the setlist redesign. */
+export function youtubeMusicUrl(videoId: string): string {
+  return `https://music.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
 }
 
 export interface BankCategory {
@@ -36,7 +46,7 @@ export interface BankCategory {
    * Derived either way, so a rebuild doesn't churn ids.
    */
   id: string;
-  /** Board column header — a playlist name, or an AI-chosen theme. */
+  /** Setlist section header — a playlist name, or an AI-chosen theme. */
   title: string;
   /**
    * The single source playlist, when the category maps 1:1 to one. `null` (or

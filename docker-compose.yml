@@ -29,10 +29,3 @@ services:
       # scripts/questionbank/build_bank.py). Falls back to the bundled
       # sample-bank fixture if unset or the file doesn't exist.
       - QUESTION_BANK_PATH=${QUESTION_BANK_PATH:-}
-      - CLIP_START_SECONDS=${CLIP_START_SECONDS:-30}
-      - CLIP_DURATION_SECONDS=${CLIP_DURATION_SECONDS:-20}
-      # YouTube Data API v3 key. Enables runtime song substitution: when a
-      # song's embed fails (e.g. domain-restricted by the rights holder), the
-      # server searches for and tries an alternate upload before falling back
-      # to the host's manual Skip. Empty is fine; substitution just stays off.
-      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY:-}

@@ -2,7 +2,7 @@
 // games, plus an invariant checker (including the spectator-safe leak check)
 // meant to be run after every mutation.
 import { expect } from 'vitest';
-import { BOARD_ROWS, POINT_VALUES, type QuestionBank } from '@setlist/shared';
+import { SONG_POINT_VALUE, type JudgeVerdict, type QuestionBank } from '@setlist/shared';
 import { GameEngine } from '../engine.js';
 import { makeRng } from '../rng.js';
 import { sampleQuestionBank } from '../../questions/bank.js';
@@ -18,8 +18,6 @@ export class Clock {
 
 export interface MakeEngineOptions {
   bank?: QuestionBank;
-  clipStartSeconds?: number;
-  clipDurationSeconds?: number;
 }
 
 export function makeEngine(
@@ -28,13 +26,7 @@ export function makeEngine(
 ): { engine: GameEngine; clock: Clock; bank: QuestionBank } {
   const clock = new Clock();
   const bank = opts.bank ?? sampleQuestionBank();
-  const engine = new GameEngine('1234', {
-    rng: makeRng(seed),
-    bank,
-    now: clock.now,
-    clipStartSeconds: opts.clipStartSeconds,
-    clipDurationSeconds: opts.clipDurationSeconds,
-  });
+  const engine = new GameEngine('1234', { rng: makeRng(seed), bank, now: clock.now });
   engine.setCastConnected(true);
   return { engine, clock, bank };
 }
@@ -76,11 +68,31 @@ export function makeBank(categories: number, perCategory: number | number[]): Qu
         videoId: `vid${c}${q}`.padEnd(11, 'x'),
         album: null,
         durationSeconds: 240,
-        value: POINT_VALUES[Math.min(q, POINT_VALUES.length - 1)]!,
+        value: SONG_POINT_VALUE,
         startSeconds: null,
       })),
     })),
   };
+}
+
+/** The id of the first song nobody has played yet. */
+export function firstUnusedSongId(engine: GameEngine): string {
+  const song = engine.room.setlist?.songs.find((s) => !s.used);
+  if (!song) throw new Error('no unused songs left');
+  return song.id;
+}
+
+/** Arm the next song, have `buzzerId` buzz, judge them, and land in REVEAL. */
+export function playRound(
+  engine: GameEngine,
+  hostId: string,
+  buzzerId: string,
+  verdict: JudgeVerdict,
+): void {
+  const armed = engine.startSong(hostId, firstUnusedSongId(engine));
+  expect(armed).toEqual({ ok: true });
+  expect(engine.buzz(buzzerId)).toEqual({ ok: true });
+  expect(engine.judge(hostId, verdict)).toEqual({ ok: true });
 }
 
 let prevUsed = new WeakMap<GameEngine, number>();
@@ -108,59 +120,78 @@ export function checkInvariants(engine: GameEngine, bank?: QuestionBank): void {
       expect(active.lockedOutPlayerIds).not.toContain(active.lockedPlayerId);
     }
     expect(new Set(active.lockedOutPlayerIds).size).toBe(active.lockedOutPlayerIds.length);
+    // the picker never buzzes on their own round, host or demoted ex-host
+    expect(active.lockedPlayerId).not.toBe(active.pickedByPlayerId);
   }
 
-  // used-cell count never goes down
-  if (room.board) {
-    const used = room.board.cells.filter((c) => c.used).length;
+  const pub = toPublicRoom(room, 0);
+
+  // ---- setlist bookkeeping ----
+  if (room.setlist) {
+    const used = room.setlist.songs.filter((s) => s.used).length;
     const prev = prevUsed.get(engine);
     if (prev !== undefined && room.phase !== 'LOBBY') expect(used).toBeGreaterThanOrEqual(prev);
     prevUsed.set(engine, used);
-    // every cell's value comes from the ladder, by row
-    for (const cell of room.board.cells) {
-      expect(cell.value).toBe(POINT_VALUES[cell.rowIndex]);
-      expect(cell.rowIndex).toBeLessThan(BOARD_ROWS);
-    }
+    // ids are opaque + positional and unique
+    const ids = room.setlist.songs.map((s) => s.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) expect(id).toMatch(/^s\d+q\d+$/);
+    // the public projection's counts agree
+    expect(pub.songsTotal).toBe(room.setlist.songs.length);
+    expect(pub.songsRemaining + used).toBe(pub.songsTotal);
   }
 
   // ---- spectator-safe leak checks ----
-  const pub = toPublicRoom(room, 0);
   if (pub.active && !pub.active.revealed) expect(pub.active.answer).toBeNull();
   const serialized = JSON.stringify(pub);
-  const theBank = bank;
-  if (theBank) {
-    for (const cat of theBank.categories) {
+  if (bank) {
+    for (const cat of bank.categories) {
       for (const q of cat.questions) {
+        // no bank videoId, anywhere, ever
         expect(serialized).not.toContain(q.videoId);
+        // and no song title/artist at all — the setlist lives on GameRoom now,
+        // so this is what proves toPublicRoom never projects it. The one
+        // exception is the active question's own answer, once revealed.
+        const isRevealedAnswer =
+          !!room.active && room.active.revealed && room.active.question.id === q.id;
+        if (!isRevealedAnswer) {
+          expect(serialized).not.toContain(q.title);
+          expect(serialized).not.toContain(q.artist);
+        }
       }
     }
   }
-  // A substitute video id is exactly as much of a spoiler as the original —
-  // it must never reach a player socket either. Checked unconditionally (not
-  // gated on `bank`) because substitutes come from the search, not the bank.
-  if (room.active?.substituteVideoId) {
-    expect(serialized).not.toContain(room.active.substituteVideoId);
-  }
-  for (const candidate of room.active?.retryCandidates ?? []) {
-    expect(serialized).not.toContain(candidate);
-  }
-  if (theBank) {
-    // pre-reveal, the title/artist must not appear in the public projection either
-    if (room.active && !room.active.revealed) {
-      expect(serialized).not.toContain(room.active.question.title);
-      expect(serialized).not.toContain(room.active.question.artist);
-    }
+  // pre-reveal, the active title/artist must not appear in the public projection
+  if (room.active && !room.active.revealed) {
+    expect(serialized).not.toContain(room.active.question.title);
+    expect(serialized).not.toContain(room.active.question.artist);
   }
 
   for (const p of room.players) {
-    const priv = toPrivateState(engine, p.id, {});
-    // player sockets never get playback data, host or not
-    expect(priv.receiverPlayback).toBeNull();
-    if (!p.isHost) expect(priv.hostAnswer).toBeNull();
+    const priv = toPrivateState(engine, p.id);
+    if (!p.isHost) {
+      // the two host-only channels, both shut for everyone else
+      expect(priv.setlist).toBeNull();
+      expect(priv.hostAnswer).toBeNull();
+    } else {
+      // the host sees the setlist exactly while browsing, and the answer
+      // exactly while a round exists
+      expect(priv.setlist === null).toBe(!(room.phase === 'SETLIST' && !!room.setlist));
+      expect(priv.hostAnswer === null).toBe(!room.active);
+    }
+  }
+
+  // The receiver's own projection: the least privileged surface in the system.
+  const receiverPriv = toPrivateState(engine, null);
+  expect(receiverPriv.hostAnswer).toBeNull();
+  expect(receiverPriv.setlist).toBeNull();
+  const receiverJson = JSON.stringify(receiverPriv);
+  for (const cat of bank?.categories ?? []) {
+    for (const q of cat.questions) expect(receiverJson).not.toContain(q.videoId);
   }
 }
 
-/** Reset the monotonic-used-cells memory (call between independent games). */
+/** Reset the monotonic-used-songs memory (call between independent games). */
 export function resetInvariantMemory(): void {
   prevUsed = new WeakMap<GameEngine, number>();
 }

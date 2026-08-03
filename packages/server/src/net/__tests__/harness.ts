@@ -13,7 +13,6 @@ import {
 import { sampleQuestionBank } from '../../questions/bank.js';
 import { RoomManager } from '../rooms.js';
 import { attachSocketServer } from '../server.js';
-import type { YouTubeSearchClient, YouTubeSearchResult } from '../youtube.js';
 
 /** Real (short) grace period so tests exercise it without burning 60s each. */
 export const TEST_DISCONNECT_GRACE_MS = 60;
@@ -24,60 +23,13 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-/**
- * Fake YouTube search client. Records every query it is asked; returns canned
- * results. No test ever touches the network or needs a real YOUTUBE_API_KEY.
- * `gate` (when set) defers resolution so a test can inspect the mid-search
- * "retrying" window.
- */
-export interface FakeYouTube extends YouTubeSearchClient {
-  queries: string[];
-  results: YouTubeSearchResult[];
-  /** Set to a promise to hold every search open until it resolves. */
-  gate: Promise<void> | null;
-  /** Set to make searchVideos reject (the real client never does). */
-  throws: boolean;
-}
-
-export function fakeYouTube(results: YouTubeSearchResult[] = []): FakeYouTube {
-  const fake: FakeYouTube = {
-    queries: [],
-    results,
-    gate: null,
-    throws: false,
-    async searchVideos(query: string): Promise<YouTubeSearchResult[]> {
-      fake.queries.push(query);
-      if (fake.gate) await fake.gate;
-      if (fake.throws) throw new Error('search exploded');
-      return fake.results;
-    },
-  };
-  return fake;
-}
-
-/** A manually-resolvable gate for deferring a fake search. */
-export function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
-}
-
-export async function startTestServer(opts: {
-  bank?: QuestionBank;
-  clipDurationSeconds?: number;
-  /** Default null = substitution off, i.e. exactly the pre-feature behavior. */
-  youtube?: YouTubeSearchClient | null;
-} = {}): Promise<TestServer> {
+export async function startTestServer(
+  opts: { bank?: QuestionBank } = {},
+): Promise<TestServer> {
   const httpServer: HttpServer = createServer();
   const io = new Server(httpServer, { path: SOCKET_PATH });
-  const rooms = new RoomManager(opts.bank ?? sampleQuestionBank(), {
-    // Long by default so the clip timer never fires mid-test unless asked.
-    clipDurationSeconds: opts.clipDurationSeconds ?? 3600,
-  });
-  attachSocketServer(io as never, rooms, {
-    disconnectGraceMs: TEST_DISCONNECT_GRACE_MS,
-    youtube: opts.youtube ?? null,
-  });
+  const rooms = new RoomManager(opts.bank ?? sampleQuestionBank());
+  attachSocketServer(io as never, rooms, { disconnectGraceMs: TEST_DISCONNECT_GRACE_MS });
   await new Promise<void>((resolve) => httpServer.listen(0, resolve));
   const port = (httpServer.address() as { port: number }).port;
   return {
@@ -159,4 +111,26 @@ export async function makeRoom(
       for (const p of players) p.close();
     },
   };
+}
+
+/** The id of the first song the host has not played yet, off their own
+ *  (host-only) setlist projection. */
+export function firstSongId(host: Client): string {
+  const song = host.priv!.setlist!.flatMap((sec) => sec.songs).find((s) => !s.used);
+  if (!song) throw new Error('no unused songs in the host setlist');
+  return song.id;
+}
+
+/** Start the game (if it hasn't been) and arm the first unused song. */
+export async function armRound(host: Client): Promise<string> {
+  if (host.pub?.phase === 'LOBBY') {
+    const started = await host.emit('game:start', {});
+    if (!started.ok) throw new Error(started.error);
+    await tick();
+  }
+  const songId = firstSongId(host);
+  const res = await host.emit('setlist:start', { songId });
+  if (!res.ok) throw new Error(res.error);
+  await tick();
+  return songId;
 }

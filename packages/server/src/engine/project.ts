@@ -2,23 +2,29 @@
 // Spectator-safe projectors. Build the broadcast PublicRoom and the per-socket
 // PrivateState from the authoritative GameRoom, stripping hidden info.
 //
-// Three secrets, and exactly where each is allowed to appear:
+// Two secrets, and exactly where each is allowed to appear:
 //   1. The ANSWER (title + artist) — PublicActiveQuestion.answer stays null
 //      until `revealed`; before that only the host sees it, via
-//      PrivateState.hostAnswer.
-//   2. The videoId — only PrivateState.receiverPlayback, and only for sockets
-//      flagged isReceiver. A player who saw it could just look the song up.
-//   3. Unplayed cells' song data — never projected at all; public cells carry
-//      position/value/used and an opaque questionId.
+//      PrivateState.hostAnswer. The host picked the song, so they get it from
+//      the moment the round is armed — but on their own socket and nowhere else.
+//   2. The SETLIST's song data (titles, artists, videoIds) — only
+//      PrivateState.setlist, and only for the host. A player who saw a videoId
+//      could just look the song up; a player who saw the list knows what's
+//      coming.
+//
+// The TV receiver is now the LEAST privileged surface: it plays no media, so it
+// needs nothing private at all.
 // ============================================================================
 import type {
   GameRoom,
+  HostSetlistSection,
   PrivateState,
   PublicActiveQuestion,
   PublicAnswer,
   PublicRoom,
-  ReceiverPlayback,
+  SetlistState,
 } from '@setlist/shared';
+import { SONG_POINT_VALUE } from '@setlist/shared';
 import type { GameEngine } from './engine.js';
 
 export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
@@ -29,26 +35,23 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       ? { title: a.question.title, artist: a.question.artist }
       : null;
     active = {
-      cell: { ...a.cell },
-      categoryTitle: room.board?.categories[a.cell.categoryIndex]?.title ?? '',
-      value: a.cell.value,
+      songId: a.songId,
+      sectionTitle: room.setlist?.sections[a.sectionIndex]?.title ?? '',
+      value: SONG_POINT_VALUE,
       startedAt: a.startedAt,
-      durationSeconds: a.durationSeconds,
       lockedPlayerId: a.lockedPlayerId,
       lockedOutPlayerIds: [...a.lockedOutPlayerIds],
       verdict: a.verdict ? { ...a.verdict } : null,
       awarded: a.awarded,
       revealed: a.revealed,
       answer,
-      playbackError: a.playbackError,
-      timedOut: a.timedOut,
-      retrying: a.retrying,
-      // videoId intentionally omitted — see PrivateState.receiverPlayback.
-      // So are substituteVideoId / retryCandidates: a candidate id is exactly
-      // as much of a spoiler as the original. This object is built field by
-      // field (never `...a`) precisely so a new server-only field can't leak.
+      // `question` (title/artist/videoId) and pickedByPlayerId intentionally
+      // omitted. This object is built field by field (never `...a`) precisely
+      // so a new server-only field can't leak by accident.
     };
   }
+
+  const songs = room.setlist?.songs ?? [];
 
   return {
     code: room.code,
@@ -64,13 +67,11 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       joinOrder: p.joinOrder,
       pendingJoin: p.pendingJoin,
     })),
-    board: room.board
-      ? {
-          categories: room.board.categories.map((c) => ({ ...c })),
-          cells: room.board.cells.map((c) => ({ ...c })),
-        }
-      : null,
     active,
+    // Counts only. There is deliberately NO setlist field on PublicRoom — the
+    // songs live on GameRoom now, and this is the sole reason that is safe.
+    songsTotal: songs.length,
+    songsRemaining: songs.filter((s) => !s.used).length,
     winnerPlayerIds: [...room.winnerPlayerIds],
     castConnected: room.castConnected,
     pause: { ...room.pause },
@@ -78,37 +79,30 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
   };
 }
 
-export interface PrivateOpts {
-  /** True only for TV receiver sockets. Player sockets must never pass this. */
-  isReceiver?: boolean;
+/** Group the setlist into host-facing sections. Field by field, never spread —
+ *  a SetlistSong carries the whole BankQuestion. */
+function toHostSetlist(setlist: SetlistState): HostSetlistSection[] {
+  return setlist.sections
+    .map((section) => ({
+      title: section.title,
+      songs: setlist.songs
+        .filter((s) => s.sectionIndex === section.index)
+        .map((s) => ({
+          id: s.id,
+          title: s.question.title,
+          artist: s.question.artist,
+          videoId: s.question.videoId,
+          used: s.used,
+        })),
+    }))
+    .filter((section) => section.songs.length > 0);
 }
 
-export function toPrivateState(
-  engine: GameEngine,
-  playerId: string | null,
-  opts: PrivateOpts = {},
-): PrivateState {
+export function toPrivateState(engine: GameEngine, playerId: string | null): PrivateState {
   const room = engine.room;
   const a = room.active;
 
-  // Receiver sockets have no seat but do need the one thing nobody else may
-  // see: which video to play, from where.
-  // When runtime song substitution has swapped in an alternate upload, that
-  // substitute id travels through this same receiver-only channel — no new
-  // event, no new surface, so the videoId secret keeps exactly one home.
-  let receiverPlayback: ReceiverPlayback | null = null;
-  if (opts.isReceiver && a) {
-    receiverPlayback = {
-      videoId: a.substituteVideoId ?? a.question.videoId,
-      startSeconds: a.startSeconds,
-      durationSeconds: a.durationSeconds,
-      playToken: a.playToken,
-      // Buzzing cuts the music — that's the Jeopardy feel — and so does the
-      // reveal, where the TV is showing the answer instead.
-      paused: room.phase !== 'PLAYING',
-    };
-  }
-
+  // Receiver (and unseated) sockets: nothing privileged at all.
   if (!playerId) {
     return {
       playerId: null,
@@ -117,18 +111,20 @@ export function toPrivateState(
       score: 0,
       canBuzz: false,
       hostAnswer: null,
-      receiverPlayback,
+      setlist: null,
     };
   }
 
   const p = room.players.find((pl) => pl.id === playerId);
   const isHost = p?.isHost ?? false;
-  // The host needs the answer to judge against — but not a moment before
-  // someone (possibly the host themselves) has actually locked in. Sending it
-  // any earlier would spoil the clip for a host who is also playing.
-  const questionLocked = !!a && (a.lockedPlayerId !== null || a.revealed);
+  // The host picked the song, so they legitimately know it from the moment the
+  // round is armed — but still ONLY on the host's own socket. Do not widen this
+  // to `a !== null`: that would hand the answer to every player.
   const hostAnswer: PublicAnswer | null =
-    isHost && questionLocked ? { title: a!.question.title, artist: a!.question.artist } : null;
+    isHost && a ? { title: a.question.title, artist: a.question.artist } : null;
+  // Host-only, and only while browsing: the full setlist, answers and all.
+  const setlist =
+    isHost && room.phase === 'SETLIST' && room.setlist ? toHostSetlist(room.setlist) : null;
 
   return {
     playerId,
@@ -137,6 +133,6 @@ export function toPrivateState(
     score: p?.score ?? 0,
     canBuzz: engine.canBuzz(playerId),
     hostAnswer,
-    receiverPlayback,
+    setlist,
   };
 }

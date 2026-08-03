@@ -3,14 +3,18 @@
 // This is the single source of truth. Clients render projections of it with
 // hidden fields stripped (see projection.ts). Nothing in here is broadcast
 // verbatim; the projectors decide what each surface may see.
+//
+// The game is a setlist, not a board: the host browses themed sections of the
+// question bank on their own phone, plays the song themselves via a native
+// YouTube Music link, then arms the buzzers. Our app plays no media at all.
 // ============================================================================
 import type { BankQuestion } from './questions.js';
 
 export type RoomPhase =
   | 'LOBBY' // pre-game, players joining
-  | 'BOARD' // host is picking a cell
-  | 'PLAYING' // clip is playing, buzzers armed
-  | 'LOCKED' // someone buzzed; music paused, host judges
+  | 'SETLIST' // host is browsing/choosing the next song
+  | 'ARMED' // host has started the round; buzzers are live
+  | 'LOCKED' // someone buzzed; host judges
   | 'REVEAL' // answer shown to everyone
   | 'GAME_OVER'
   | 'PAUSED'; // host dropped / cast dropped; see `pause`
@@ -27,35 +31,37 @@ export interface Player {
   pendingJoin: boolean; // joined mid-game; plays from the next question on
 }
 
-export interface BoardCell {
-  categoryIndex: number;
-  rowIndex: number;
-  /** POINT_VALUES[rowIndex] — the authoritative value, not the bank's suggestion. */
-  value: number;
-  /** Key into the engine's private question map. Carries no song data itself. */
-  questionId: string;
+/** One bank category, flattened into a setlist section header. */
+export interface SetlistSection {
+  index: number;
+  id: string; // BankCategory.id
+  title: string; // BankCategory.title — the theme label the host browses by
+}
+
+/** SERVER-ONLY in full: `question` carries the answer and the videoId. */
+export interface SetlistSong {
+  /** Opaque + positional (`s<section>q<index>`). NEVER derived from the bank id. */
+  id: string;
+  sectionIndex: number;
+  question: BankQuestion;
   used: boolean;
 }
 
-export interface BoardCategory {
-  id: string;
-  title: string;
-}
-
-export interface BoardState {
-  categories: BoardCategory[];
-  cells: BoardCell[];
+export interface SetlistState {
+  sections: SetlistSection[];
+  songs: SetlistSong[];
 }
 
 export type JudgeVerdict = { titleCorrect: boolean; artistCorrect: boolean };
 
 export interface ActiveQuestion {
-  cell: BoardCell;
-  /** SERVER-ONLY in full (title/artist are the answer, videoId is a spoiler). */
+  songId: string;
+  sectionIndex: number;
+  /** SERVER-ONLY (title/artist are the answer; videoId is a spoiler). */
   question: BankQuestion;
-  startedAt: number; // ms epoch when PLAYING began
-  startSeconds: number; // resolved clip offset
-  durationSeconds: number; // resolved clip length
+  /** Who armed this round. Permanently ineligible to buzz on it (see plan §2.7). */
+  pickedByPlayerId: string;
+  startedAt: number; // ms epoch when ARMED began
   lockedPlayerId: string | null; // the buzz winner
   /** SERVER timestamp taken when the buzz was processed. Never client-supplied. */
   lockedAt: number | null;
@@ -63,22 +69,6 @@ export interface ActiveQuestion {
   verdict: JudgeVerdict | null;
   awarded: number; // points delta applied (may be negative)
   revealed: boolean;
-  /** Bumped every time playback should (re)start; the receiver watches it. */
-  playToken: number;
-  playbackError: string | null; // the receiver reported the video won't embed/play
-  /** True only when the clip ran out with nobody buzzing (clipExpired()) — not
-   * set for a host skip, which reveals via the same phase transition. Drives
-   * the "times up" sound on the receiver. */
-  timedOut: boolean;
-  /** True while the server is searching for / loading a substitute video.
-   *  Buzzing is disabled and the clip timer is suspended while true. */
-  retrying: boolean;
-  /** Server-only from here down — deliberately NOT in PublicActiveQuestion. */
-  retryAttempts: number;
-  retryCandidates: string[];
-  substituteVideoId: string | null;
-  retryId: string | null;
-  lastPlaybackErrorMessage: string | null;
 }
 
 export interface RoomSettings {
@@ -97,7 +87,7 @@ export interface GameRoom {
   phase: RoomPhase;
   settings: RoomSettings;
   players: Player[];
-  board: BoardState | null; // null while in LOBBY
+  setlist: SetlistState | null; // null while in LOBBY
   active: ActiveQuestion | null;
   winnerPlayerIds: string[]; // supports ties
   castConnected: boolean; // must be true to leave LOBBY
@@ -108,13 +98,8 @@ export interface GameRoom {
 }
 
 // ---------- Constants ----------
-export const BOARD_ROWS = 5;
-export const BOARD_COLUMNS = 5;
-export const POINT_VALUES = [100, 200, 300, 400, 500] as const;
-/** Solo play is fine — the game has no structural need for a minimum. */
-export const MIN_PLAYERS = 1;
+/** Flat per-song value. Title = half, artist = half, both wrong = minus half. */
+export const SONG_POINT_VALUE = 100;
+/** The host never buzzes, so a solo game has nobody who could answer. */
+export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 10;
-export const DEFAULT_CLIP_START_SECONDS = 30;
-export const DEFAULT_CLIP_DURATION_SECONDS = 20;
-/** Alternate uploads tried automatically before auto-skipping the question. */
-export const MAX_SUBSTITUTION_ATTEMPTS = 3;

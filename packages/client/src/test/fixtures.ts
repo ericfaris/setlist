@@ -1,6 +1,6 @@
 import {
-  POINT_VALUES,
-  type BoardState,
+  SONG_POINT_VALUE,
+  type HostSetlistSection,
   type PrivateState,
   type PublicActiveQuestion,
   type PublicPlayer,
@@ -20,47 +20,37 @@ export function makePlayer(overrides: Partial<PublicPlayer> & { id: string }): P
   };
 }
 
-export function makeBoard(columns = 3): BoardState {
-  return {
-    categories: Array.from({ length: columns }, (_, c) => ({
-      id: `cat_${c}`,
-      title: `Category ${c}`,
+/** Host-only setlist projection: `sections` sections of `per` songs each. */
+export function makeHostSetlist(sections = 2, per = 3): HostSetlistSection[] {
+  return Array.from({ length: sections }, (_, s) => ({
+    title: `Category ${s}`,
+    songs: Array.from({ length: per }, (_, q) => ({
+      id: `s${s}q${q}`,
+      title: `Song ${s}-${q}`,
+      artist: `Artist ${s}-${q}`,
+      videoId: `vid${s}${q}`.padEnd(11, 'x'),
+      used: false,
     })),
-    cells: Array.from({ length: columns }, (_, c) =>
-      POINT_VALUES.map((value, rowIndex) => ({
-        categoryIndex: c,
-        rowIndex,
-        value,
-        questionId: `c${c}r${rowIndex}`,
-        used: false,
-      })),
-    ).flat(),
-  };
+  }));
 }
 
-export function makeActive(
-  overrides: Partial<PublicActiveQuestion> = {},
-): PublicActiveQuestion {
+export function makeActive(overrides: Partial<PublicActiveQuestion> = {}): PublicActiveQuestion {
   return {
-    cell: { categoryIndex: 0, rowIndex: 2, value: 300, questionId: 'c0r2', used: true },
-    categoryTitle: 'Category 0',
-    value: 300,
+    songId: 's0q2',
+    sectionTitle: 'Category 0',
+    value: SONG_POINT_VALUE,
     startedAt: Date.now(),
-    durationSeconds: 20,
     lockedPlayerId: null,
     lockedOutPlayerIds: [],
     verdict: null,
     awarded: 0,
     revealed: false,
     answer: null,
-    playbackError: null,
-    timedOut: false,
-    retrying: false,
     ...overrides,
   };
 }
 
-/** Minimal but structurally valid PublicRoom, defaulted to a 3-player PLAYING phase. */
+/** Minimal but structurally valid PublicRoom, defaulted to a 3-player ARMED phase. */
 export function makePub(overrides: Partial<PublicRoom> = {}): PublicRoom {
   const players = overrides.players ?? [
     makePlayer({ id: 'p1', displayName: 'Eric', isHost: true, joinOrder: 0 }),
@@ -69,11 +59,12 @@ export function makePub(overrides: Partial<PublicRoom> = {}): PublicRoom {
   ];
   return {
     code: '1234',
-    phase: 'PLAYING',
+    phase: 'ARMED',
     settings: { penalizeWrongAnswers: true },
     players,
-    board: makeBoard(),
     active: makeActive(),
+    songsTotal: 6,
+    songsRemaining: 5,
     winnerPlayerIds: [],
     castConnected: true,
     pause: { active: false, reason: null, waitingForPlayerId: null },
@@ -91,7 +82,7 @@ export function makePriv(overrides: Partial<PrivateState> = {}): PrivateState {
     score: 0,
     canBuzz: true,
     hostAnswer: null,
-    receiverPlayback: null,
+    setlist: null,
     ...overrides,
   };
 }

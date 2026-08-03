@@ -1,7 +1,7 @@
 // The committed sample fixture is what makes the app runnable with no
-// YT Music credentials — so it has to stay valid and big enough for a board.
+// YT Music credentials — so it has to stay valid and big enough to play.
 import { describe, expect, it } from 'vitest';
-import { BOARD_COLUMNS, BOARD_ROWS, validateQuestionBank } from '@setlist/shared';
+import { validateQuestionBank } from '@setlist/shared';
 import sampleBank from '../sample-bank.json' with { type: 'json' };
 import { loadQuestionBank, sampleQuestionBank } from '../bank.js';
 
@@ -11,10 +11,11 @@ describe('sample bank fixture', () => {
     expect(res.ok, res.ok ? '' : res.error).toBe(true);
   });
 
-  it('has enough categories and questions to fill a board', () => {
+  it('has enough sections and songs to make a real setlist', () => {
     const bank = sampleQuestionBank();
-    const usable = bank.categories.filter((c) => c.questions.length >= BOARD_ROWS);
-    expect(usable.length).toBeGreaterThanOrEqual(BOARD_COLUMNS);
+    expect(bank.categories.length).toBeGreaterThanOrEqual(3);
+    const songs = bank.categories.reduce((n, c) => n + c.questions.length, 0);
+    expect(songs).toBeGreaterThanOrEqual(20);
     expect(bank.source).toBe('fixture');
   });
 

@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sampleQuestionBank } from '../../questions/bank.js';
 import { RoomManager } from '../rooms.js';
-import { makeRoom, startTestServer, tick, type TestServer } from './harness.js';
+import { armRound, makeRoom, startTestServer, tick, type TestServer } from './harness.js';
 
 describe('two rooms at once', () => {
   let server: TestServer;
@@ -19,17 +19,14 @@ describe('two rooms at once', () => {
     const b = await makeRoom(server.port, 2);
     expect(a.code).not.toBe(b.code);
 
-    for (const room of [a, b]) {
-      await room.players[0]!.emit('game:start', {});
-      await room.players[0]!.emit('board:select', { categoryIndex: 0, rowIndex: 0 });
-    }
+    for (const room of [a, b]) await armRound(room.players[0]!);
     await tick();
     await a.players[1]!.emit('buzz:press', {});
     await tick();
 
     expect(a.players[0]!.pub?.phase).toBe('LOCKED');
     expect(a.players[0]!.pub?.active?.lockedPlayerId).toBe(a.players[1]!.playerId);
-    expect(b.players[0]!.pub?.phase).toBe('PLAYING');
+    expect(b.players[0]!.pub?.phase).toBe('ARMED');
     expect(b.players[0]!.pub?.active?.lockedPlayerId).toBeNull();
     expect(b.players[1]!.priv?.canBuzz).toBe(true);
 

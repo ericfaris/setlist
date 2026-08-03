@@ -832,8 +832,9 @@ def build_bank(
             )
     else:
         log(
-            "YOUTUBE_API_KEY not set; skipping the embeddable pre-check "
-            "(a disabled-embedding track will surface as an in-game Skip instead)."
+            "Embeddable pre-check not requested; skipping it. "
+            "The game plays songs via native YouTube Music links, which have no "
+            "embed restrictions, so this filter is no longer needed."
         )
 
     if ai_client is not None and not opts.no_ai:
@@ -1040,12 +1041,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--youtube-api-key",
-        default=os.environ.get("YOUTUBE_API_KEY"),
+        default=None,
         metavar="KEY",
         help=(
-            "Google/YouTube Data API v3 key (or set YOUTUBE_API_KEY) — pre-filters "
-            "songs with embedding disabled so they never reach the board, instead of "
-            "surfacing as an in-game Skip"
+            "Google/YouTube Data API v3 key — optional legacy pre-filter that drops "
+            "songs with embedding disabled. No longer needed: the game plays songs via "
+            "native YouTube Music links, which have no embed restrictions."
         ),
     )
     parser.add_argument(
@@ -1110,7 +1111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Categories: AI-generated ({os.environ.get('ANTHROPIC_MODEL') or DEFAULT_MODEL})")
     else:
         print("Categories: one per playlist (no AI)")
-    print(f"Embeddable pre-check: {'ran' if args.youtube_api_key else 'skipped (no YOUTUBE_API_KEY)'}")
+    print(f"Embeddable pre-check: {'ran' if args.youtube_api_key else 'skipped (not requested)'}")
 
     if args.dry_run:
         print("\n--dry-run: nothing written.")

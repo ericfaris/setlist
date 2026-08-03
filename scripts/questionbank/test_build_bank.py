@@ -349,7 +349,7 @@ class BuildBankTests(unittest.TestCase):
         all_ids = [q["videoId"] for c in bank["categories"] for q in c["questions"]]
         self.assertIn("vid0_0", all_ids)
         self.assertEqual(session.calls, [])
-        self.assertTrue([line for line in logs if "YOUTUBE_API_KEY not set" in line], logs)
+        self.assertTrue([line for line in logs if "Embeddable pre-check not requested" in line], logs)
 
     def test_skips_embeddable_filter_without_a_session(self):
         logs: list[str] = []
@@ -360,7 +360,7 @@ class BuildBankTests(unittest.TestCase):
             youtube_session=None,
         )
         self.assertEqual(len(bank["categories"]), 1)
-        self.assertTrue([line for line in logs if "YOUTUBE_API_KEY not set" in line], logs)
+        self.assertTrue([line for line in logs if "Embeddable pre-check not requested" in line], logs)
 
     def test_raises_when_everything_becomes_unembeddable(self):
         client = simple_client(1, 8)

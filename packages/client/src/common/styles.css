@@ -11,7 +11,6 @@
   --warn: #fbbf24;
   --gold: #f5c451;
   --line: #2a3766;
-  --jeopardy: #0b1f6b;
 }
 
 * { box-sizing: border-box; }
@@ -77,30 +76,37 @@ input:focus, select:focus { outline: 2px solid var(--accent); }
 .notice { padding: 10px 14px; border-radius: 12px; background: #14233f; border: 1px solid var(--line); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-/* ---------------- Board (phone + TV share the vocabulary) ---------------- */
-.board { display: grid; gap: 6px; }
-.board .cathead {
-  background: var(--jeopardy);
-  border-radius: 8px;
-  padding: 8px 6px;
-  font-weight: 800;
-  text-align: center;
+/* ---------------- Setlist (host's phone only) ---------------- */
+.setlist { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow-y: auto; }
+.setlist .sechead {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  overflow-wrap: anywhere;
+  color: var(--muted);
+  padding: 6px 2px;
 }
-.cell {
-  background: var(--jeopardy);
-  color: var(--gold);
-  border: 1px solid #16307f;
-  border-radius: 8px;
-  font-weight: 900;
-  padding: 14px 4px;
+.setlist .song {
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+.setlist .song.used { opacity: 0.4; cursor: default; }
+
+a.primary {
+  display: block;
   text-align: center;
-  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+  background: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+  padding: 12px 16px;
+  border-radius: 12px;
 }
-button.cell:hover { background: #12309a; }
-.cell.used { background: #0b1020; color: transparent; border-color: var(--line); }
 
 /* ---------------- Buzzer ---------------- */
 .buzz {
@@ -134,8 +140,6 @@ button.cell:hover { background: #12309a; }
 }
 .scorerow.me { border-color: var(--accent); }
 .nowplaying { display: flex; flex-direction: column; gap: 4px; }
-.clipbar { height: 8px; border-radius: 999px; background: var(--bg-2); overflow: hidden; border: 1px solid var(--line); }
-.clipbar > div { height: 100%; background: var(--accent); transition: width 0.25s linear; }
 
 /* ---------------- Receiver (TV) ---------------- */
 .tv { width: 100vw; height: 100vh; overflow: hidden; padding: 3vh 4vw; display: flex; flex-direction: column; gap: 2vh; }
@@ -149,9 +153,6 @@ button.cell:hover { background: #12309a; }
    scoreboard off the bottom of the screen. Only the .tv element itself may be
    full height. */
 .tv > .center { min-height: 0; }
-.tv .board { flex: 1; gap: 0.8vw; }
-.tv .board .cathead { font-size: 1.7vw; padding: 1.5vh 0.5vw; border-radius: 0.8vw; }
-.tv .cell { font-size: 4vw; padding: 0; display: grid; place-items: center; border-radius: 0.8vw; }
 .tv .scores { display: flex; gap: 1.5vw; flex-wrap: wrap; }
 .tv .scorecard { background: var(--panel); border-radius: 1.2vw; padding: 1.2vh 1.6vw; border: 2px solid var(--line); text-align: center; }
 .tv .scorecard.leader { border-color: var(--gold); }
@@ -160,25 +161,3 @@ button.cell:hover { background: #12309a; }
 .tv .big { font-size: 6vw; font-weight: 900; text-align: center; }
 .tv .huge { font-size: 9vw; font-weight: 900; text-align: center; }
 .tv .sub { font-size: 3vw; font-weight: 700; color: var(--muted); text-align: center; }
-.tv .clipbar { height: 2vh; border-radius: 999px; }
-
-/* The YouTube iframe must stay rendered (audio keeps playing) but must never
-   be visible — its chrome prints the song title, which is the answer. */
-.ytstage { position: fixed; left: 0; top: 0; width: 480px; height: 270px; z-index: -1; opacity: 0; pointer-events: none; }
-.ytshield { position: absolute; inset: 0; background: #000; pointer-events: none; }
-
-.audiocover {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  background: rgba(6, 10, 26, 0.94);
-  font-size: 4vw;
-  font-weight: 900;
-  border: none;
-  color: var(--text);
-  width: 100vw;
-  height: 100vh;
-  border-radius: 0;
-}

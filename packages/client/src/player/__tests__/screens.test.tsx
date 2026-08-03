@@ -1,6 +1,6 @@
-// The buzz button and the host judging panel are the two screens where a UI
-// bug is a game bug: buzzing when you shouldn't be able to, or a non-host
-// seeing the answer.
+// The buzz button, the setlist browser and the host judging panel are the
+// screens where a UI bug is a game bug: buzzing when you shouldn't be able to,
+// or a non-host seeing the songs.
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,9 +15,11 @@ vi.mock('socket.io-client', () => ({
   }),
 }));
 
-const { BuzzScreen, BoardPick, HostJudge, Reveal, Lobby } = await import('../screens.js');
+const { BuzzScreen, SetlistScreen, HostJudge, Reveal, Lobby } = await import('../screens.js');
 const { store } = await import('../../common/store.js');
-const { makePub, makePriv, makeActive, makePlayer } = await import('../../test/fixtures.js');
+const { makePub, makePriv, makeActive, makePlayer, makeHostSetlist } = await import(
+  '../../test/fixtures.js'
+);
 
 describe('BuzzScreen', () => {
   it('is armed and dispatches a buzz on pointer down', () => {
@@ -28,6 +30,13 @@ describe('BuzzScreen', () => {
     fireEvent.pointerDown(button);
     expect(spy).toHaveBeenCalledTimes(1);
     spy.mockRestore();
+  });
+
+  it('shows the section and the flat value, never the song', () => {
+    render(<BuzzScreen pub={makePub()} priv={makePriv()} />);
+    expect(screen.getByText('Category 0')).toBeInTheDocument();
+    expect(screen.getByText('100 pts')).toBeInTheDocument();
+    expect(screen.getByText(/Name that song… and the artist!/)).toBeInTheDocument();
   });
 
   it('shows who locked in and disables the button for everyone else', () => {
@@ -54,30 +63,33 @@ describe('BuzzScreen', () => {
     expect(button).toBeDisabled();
   });
 
-  it('cools the buzzer and explains itself while the server hunts a substitute', () => {
-    const pub = makePub({ active: makeActive({ retrying: true }) });
-    render(<BuzzScreen pub={pub} priv={makePriv({ playerId: 'p2', canBuzz: false })} />);
-    const button = screen.getByRole('button', { name: /Finding another version/ });
+  it("tells the host they're hosting this one instead of a dead buzzer", () => {
+    const spy = vi.spyOn(store, 'buzz').mockResolvedValue(true);
+    render(
+      <BuzzScreen
+        pub={makePub()}
+        priv={makePriv({ playerId: 'p1', isHost: true, canBuzz: false })}
+      />,
+    );
+    const button = screen.getByRole('button', { name: "👑 You're hosting this one" });
     expect(button).toBeDisabled();
-    expect(screen.getByText(/That track won't play — finding another version/)).toBeInTheDocument();
+    fireEvent.pointerDown(button);
+    expect(spy).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'BUZZ' })).not.toBeInTheDocument();
+    spy.mockRestore();
   });
 
-  it('hides the stale error banner while retrying, and shows it once exhausted', () => {
-    const retrying = makePub({
-      active: makeActive({ retrying: true, playbackError: 'Embedding disabled (150)' }),
-    });
-    const { unmount } = render(
-      <BuzzScreen pub={retrying} priv={makePriv({ canBuzz: false })} />,
+  it('gives the host a manual reveal while armed', () => {
+    const spy = vi.spyOn(store, 'revealQuestion').mockResolvedValue(true);
+    render(
+      <BuzzScreen
+        pub={makePub()}
+        priv={makePriv({ playerId: 'p1', isHost: true, canBuzz: false })}
+      />,
     );
-    expect(screen.queryByText(/This track won't play/)).not.toBeInTheDocument();
-    unmount();
-
-    const exhausted = makePub({
-      active: makeActive({ retrying: false, playbackError: 'Embedding disabled (150)' }),
-    });
-    render(<BuzzScreen pub={exhausted} priv={makePriv({ canBuzz: false })} />);
-    expect(screen.getByText(/This track won't play/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Nobody got it — reveal/ }));
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('does not dispatch when disabled', () => {
@@ -88,11 +100,68 @@ describe('BuzzScreen', () => {
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
   });
+});
 
-  it('surfaces a receiver playback error to the room', () => {
-    const pub = makePub({ active: makeActive({ playbackError: "Embedding disabled (150)" }) });
-    render(<BuzzScreen pub={pub} priv={makePriv()} />);
-    expect(screen.getByText(/Embedding disabled \(150\)/)).toBeInTheDocument();
+describe('SetlistScreen', () => {
+  const setlistPub = () => makePub({ phase: 'SETLIST', active: null });
+  const hostPriv = () =>
+    makePriv({ playerId: 'p1', isHost: true, canBuzz: false, setlist: makeHostSetlist() });
+
+  it('shows the host section headers and tappable song rows', () => {
+    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
+    expect(screen.getByText(/Category 0 · 3 left/)).toBeInTheDocument();
+    expect(screen.getByText(/Category 1 · 3 left/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Song 0-0/ })).toBeInTheDocument();
+    expect(screen.getByText('Artist 0-1')).toBeInTheDocument();
+  });
+
+  it('reveals title, artist and a YouTube Music link when a song is tapped', () => {
+    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Song 1-2/ }));
+    expect(screen.getByText('Song 1-2')).toBeInTheDocument();
+    expect(screen.getByText('Artist 1-2')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
+    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid12xxxxxx');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('arms the round with the cued song id', () => {
+    const spy = vi.spyOn(store, 'startSong').mockResolvedValue(true);
+    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Song 0-1/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Start round — arm buzzers/ }));
+    expect(spy).toHaveBeenCalledWith('s0q1');
+    spy.mockRestore();
+  });
+
+  it('filters rows by the search box', () => {
+    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
+    fireEvent.change(screen.getByPlaceholderText('Search songs or artists'), {
+      target: { value: 'song 1-2' },
+    });
+    expect(screen.getByRole('button', { name: /Song 1-2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Song 0-0/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Category 0 ·/)).not.toBeInTheDocument();
+  });
+
+  it('shows a non-host who is choosing, with NO song titles anywhere in the DOM', () => {
+    const { container } = render(<SetlistScreen pub={setlistPub()} priv={makePriv()} />);
+    expect(screen.getByText('🎧 Eric is choosing a song…')).toBeInTheDocument();
+    const html = container.innerHTML;
+    for (const section of makeHostSetlist()) {
+      for (const song of section.songs) {
+        expect(html).not.toContain(song.title);
+        expect(html).not.toContain(song.artist);
+        expect(html).not.toContain(song.videoId);
+      }
+    }
+  });
+
+  it('does not crash when the host projection has no setlist yet', () => {
+    render(
+      <SetlistScreen pub={setlistPub()} priv={makePriv({ playerId: 'p1', isHost: true })} />,
+    );
+    expect(screen.getByText('Loading setlist…')).toBeInTheDocument();
   });
 });
 
@@ -139,28 +208,23 @@ describe('HostJudge', () => {
     spy.mockRestore();
   });
 
+  it('reveals and moves on via the secondary button', () => {
+    const spy = vi.spyOn(store, 'revealQuestion').mockResolvedValue(true);
+    const priv = makePriv({
+      playerId: 'p1',
+      isHost: true,
+      hostAnswer: { title: 'Take On Me', artist: 'a-ha' },
+    });
+    render(<HostJudge pub={lockedPub()} priv={priv} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Reveal & move on' }));
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it('never shows a non-host the answer during the buzz screen', () => {
     render(<BuzzScreen pub={lockedPub()} priv={makePriv({ canBuzz: false })} />);
     expect(screen.queryByText('Take On Me')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Both ✓' })).not.toBeInTheDocument();
-  });
-});
-
-describe('BoardPick', () => {
-  it('lets the host tap a square', () => {
-    const spy = vi.spyOn(store, 'selectCell').mockResolvedValue(true);
-    const pub = makePub({ phase: 'BOARD', active: null });
-    render(<BoardPick pub={pub} priv={makePriv({ playerId: 'p1', isHost: true })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Category 1 for 300' }));
-    expect(spy).toHaveBeenCalledWith(1, 2);
-    spy.mockRestore();
-  });
-
-  it('shows a non-host who is picking, with no tappable squares', () => {
-    const pub = makePub({ phase: 'BOARD', active: null });
-    render(<BoardPick pub={pub} priv={makePriv()} />);
-    expect(screen.getByText('🎧 Eric is picking…')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /for 300/ })).not.toBeInTheDocument();
   });
 });
 
@@ -172,13 +236,14 @@ describe('Reveal', () => {
         revealed: true,
         lockedPlayerId: 'p3',
         verdict: { titleCorrect: true, artistCorrect: false },
-        awarded: 150,
+        awarded: 50,
         answer: { title: 'Take On Me', artist: 'a-ha' },
       }),
     });
     render(<Reveal pub={pub} priv={makePriv()} />);
     expect(screen.getByText('Take On Me')).toBeInTheDocument();
-    expect(screen.getByText('April +150')).toBeInTheDocument();
+    expect(screen.getByText('April +50')).toBeInTheDocument();
+    expect(screen.getByText(/Category 0 · 100 pts/)).toBeInTheDocument();
     // non-host has no Next button
     expect(screen.queryByRole('button', { name: 'Next →' })).not.toBeInTheDocument();
   });
@@ -188,7 +253,6 @@ describe('Lobby', () => {
   it('lets the host hand off the crown but disables start without a TV', () => {
     const pub = makePub({
       phase: 'LOBBY',
-      board: null,
       active: null,
       castConnected: false,
       players: [

@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import type { PrivateState, PublicRoom } from '@setlist/shared';
+import { useEffect, useMemo, useState } from 'react';
+import { youtubeMusicUrl, type HostSetlistSong, type PrivateState, type PublicRoom } from '@setlist/shared';
 import { store } from '../common/store.js';
-import { BoardGrid, ClipBar, nameOf } from '../common/ui.js';
+import { nameOf } from '../common/ui.js';
 
 function me(pub: PublicRoom, priv: PrivateState) {
   return pub.players.find((p) => p.id === priv.playerId) ?? null;
@@ -88,22 +88,129 @@ export function Lobby({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   );
 }
 
-// ---------------------------------------------------------------- Board
-export function BoardPick({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
+// ---------------------------------------------------------------- Setlist
+/**
+ * The host browses the setlist and taps a song. Tapping is deliberately pure
+ * CLIENT state — the server learns nothing until "Start round", which is what
+ * makes "buzzing is never live merely from having tapped a song" structurally
+ * true rather than merely enforced.
+ */
+export function SetlistScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   const self = me(pub, priv);
   const isHost = !!self?.isHost;
   const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
+  const [cued, setCued] = useState<HostSetlistSong | null>(null);
+  const [query, setQuery] = useState('');
+
+  // Returning to the setlist after a round must start from the list, never a
+  // stale cue panel.
+  useEffect(() => {
+    if (pub.phase !== 'SETLIST') setCued(null);
+  }, [pub.phase]);
+
+  const sections = priv.setlist;
+  const filtered = useMemo(() => {
+    if (!sections) return [];
+    const q = query.trim().toLowerCase();
+    if (!q) return sections;
+    return sections
+      .map((sec) => ({
+        ...sec,
+        songs: sec.songs.filter(
+          (song) =>
+            song.title.toLowerCase().includes(q) || song.artist.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((sec) => sec.songs.length > 0);
+  }, [sections, query]);
+
+  // Non-host (and the TV's own idea of it): never render a single song title.
+  if (!isHost) {
+    return (
+      <div className="stack">
+        <div className="card center-text">🎧 {hostName} is choosing a song…</div>
+        <ScoreStrip pub={pub} priv={priv} />
+      </div>
+    );
+  }
+
+  if (cued) {
+    const sectionTitle =
+      sections?.find((sec) => sec.songs.some((song) => song.id === cued.id))?.title ?? '';
+    return (
+      <div className="stack">
+        <div className="card stack">
+          <div>
+            <b>{cued.title}</b>
+          </div>
+          <div className="muted">{cued.artist}</div>
+          <div className="small muted">{sectionTitle}</div>
+          <a
+            className="primary"
+            href={youtubeMusicUrl(cued.videoId)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            ▶ Open in YouTube Music
+          </a>
+          <button className="primary" onClick={() => void store.startSong(cued.id)}>
+            🔔 Start round — arm buzzers
+          </button>
+          <button className="ghost small" onClick={() => setCued(null)}>
+            ← Back to setlist
+          </button>
+          <div className="small muted">Play it out loud first, then arm the buzzers.</div>
+        </div>
+        <ScoreStrip pub={pub} priv={priv} />
+      </div>
+    );
+  }
+
+  if (!sections) {
+    return (
+      <div className="stack">
+        <div className="card center-text muted">Loading setlist…</div>
+        <ScoreStrip pub={pub} priv={priv} />
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
       <div className="card stack">
-        <div className="h2">{isHost ? 'Pick a square' : `🎧 ${hostName} is picking…`}</div>
-        {pub.board && (
-          <BoardGrid
-            board={pub.board}
-            onPick={isHost ? (c, r) => void store.selectCell(c, r) : undefined}
-          />
-        )}
+        <div className="h2">Pick a song</div>
+        <input
+          value={query}
+          placeholder="Search songs or artists"
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="setlist">
+          {filtered.map((sec) => (
+            <div key={sec.title} className="stack" style={{ gap: 4 }}>
+              <div className="sechead">
+                {sec.title} · {sec.songs.filter((song) => !song.used).length} left
+              </div>
+              {sec.songs.map((song) =>
+                song.used ? (
+                  <div key={song.id} className="song used">
+                    <b>{song.title}</b>
+                    <div className="muted small">
+                      {song.artist} · ✓ played
+                    </div>
+                  </div>
+                ) : (
+                  <button key={song.id} className="song" onClick={() => setCued(song)}>
+                    <b>{song.title}</b>
+                    <div className="muted small">{song.artist}</div>
+                  </button>
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+        <button className="ghost small" onClick={() => store.forceEnd()}>
+          🏁 End game &amp; show scores
+        </button>
       </div>
       <ScoreStrip pub={pub} priv={priv} />
     </div>
@@ -139,12 +246,11 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
     cls += ' out';
     label = '❌ You already guessed';
     disabled = true;
-  } else if (active.retrying) {
-    // Ahead of the generic !canBuzz branch so the reason is explained rather
-    // than the button just going dead. After the lock branches: a lock is a
-    // stronger statement, and the two can't co-occur anyway.
+  } else if (isHost) {
+    // The host picked and played this song — don't leave them staring at a
+    // dead red button with no explanation.
     cls += ' out';
-    label = '🔎 Finding another version…';
+    label = "👑 You're hosting this one";
     disabled = true;
   } else if (!priv.canBuzz) {
     disabled = true;
@@ -156,16 +262,10 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
     <div className="stack">
       <div className="card nowplaying">
         <div className="spread">
-          <b>{active.categoryTitle}</b>
-          <span className="pill">${active.value}</span>
+          <b>{active.sectionTitle}</b>
+          <span className="pill">{active.value} pts</span>
         </div>
-        <ClipBar startedAt={active.startedAt} durationSeconds={active.durationSeconds} />
-        {active.retrying && (
-          <div className="banner small">🔎 That track won't play — finding another version…</div>
-        )}
-        {!active.retrying && active.playbackError && (
-          <div className="banner small">This track won't play: {active.playbackError}</div>
-        )}
+        <div className="small muted">Name that song… and the artist!</div>
       </div>
 
       <button
@@ -183,15 +283,8 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
       </button>
 
       {isHost && pub.phase === 'LOCKED' && <HostJudge pub={pub} priv={priv} />}
-      {isHost && pub.phase === 'PLAYING' && (
-        <div className="row">
-          <button className="grow" onClick={() => void store.replayClip()}>
-            🔁 Replay clip
-          </button>
-          <button className="grow" onClick={() => void store.skipQuestion()}>
-            ⏭ Skip
-          </button>
-        </div>
+      {isHost && pub.phase === 'ARMED' && (
+        <button onClick={() => void store.revealQuestion()}>🔎 Nobody got it — reveal</button>
       )}
 
       <ScoreStrip pub={pub} priv={priv} />
@@ -206,7 +299,7 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
  * spoiling it for them. */
 export function HostJudge({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   const active = pub.active;
-  const questionKey = active ? `${active.cell.categoryIndex}:${active.cell.rowIndex}` : null;
+  const questionKey = active ? active.songId : null;
   const [revealedFor, setRevealedFor] = useState<string | null>(null);
   if (!active || !priv.isHost) return null;
   const judge = (titleCorrect: boolean, artistCorrect: boolean) =>
@@ -239,8 +332,8 @@ export function HostJudge({ pub, priv }: { pub: PublicRoom; priv: PrivateState }
           Both ✗
         </button>
       </div>
-      <button className="ghost small" onClick={() => void store.skipQuestion()}>
-        Skip question
+      <button className="ghost small" onClick={() => void store.revealQuestion()}>
+        Reveal &amp; move on
       </button>
     </div>
   );
@@ -257,7 +350,7 @@ export function Reveal({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
     <div className="stack">
       <div className="card stack center-text">
         <div className="small muted">
-          {active.categoryTitle} · ${active.value}
+          {active.sectionTitle} · {active.value} pts
         </div>
         <div className="title">{active.answer?.title ?? '—'}</div>
         <div className="muted">{active.answer?.artist ?? ''}</div>

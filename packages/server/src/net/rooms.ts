@@ -12,8 +12,6 @@ export interface RoomRuntime {
   sockets: Map<string, string>;
   /** receiver (TV) socketIds */
   receivers: Set<string>;
-  /** the single clip-expiry timer */
-  timer: NodeJS.Timeout | null;
   /** playerId -> pending "actually mark them disconnected" timer (see server.ts) */
   disconnectGraceTimers: Map<string, NodeJS.Timeout>;
 }
@@ -21,21 +19,13 @@ export interface RoomRuntime {
 /** How long a just-created room is protected from closeIfEmpty. */
 const ROOM_EMPTY_GRACE_MS = 60_000;
 
-export interface RoomManagerOptions {
-  clipStartSeconds?: number;
-  clipDurationSeconds?: number;
-}
-
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRuntime>();
   private readonly rng = makeRng();
   private pendingCastCode: string | null = null;
   private pendingCastAt = 0;
 
-  constructor(
-    private readonly bank: QuestionBank,
-    private readonly options: RoomManagerOptions = {},
-  ) {}
+  constructor(private readonly bank: QuestionBank) {}
 
   setPendingCastCode(code: string): void {
     this.pendingCastCode = code;
@@ -69,16 +59,11 @@ export class RoomManager {
 
   create(): RoomRuntime {
     const code = this.generateCode();
-    const engine = new GameEngine(code, {
-      bank: this.bank,
-      clipStartSeconds: this.options.clipStartSeconds,
-      clipDurationSeconds: this.options.clipDurationSeconds,
-    });
+    const engine = new GameEngine(code, { bank: this.bank });
     const runtime: RoomRuntime = {
       engine,
       sockets: new Map(),
       receivers: new Set(),
-      timer: null,
       disconnectGraceTimers: new Map(),
     };
     this.rooms.set(code, runtime);
@@ -87,7 +72,6 @@ export class RoomManager {
 
   close(code: string): void {
     const r = this.rooms.get(code);
-    if (r?.timer) clearTimeout(r.timer);
     for (const t of r?.disconnectGraceTimers.values() ?? []) clearTimeout(t);
     this.rooms.delete(code);
   }

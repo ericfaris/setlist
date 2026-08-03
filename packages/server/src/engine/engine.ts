@@ -1,64 +1,49 @@
 // ============================================================================
 // Setlist game engine — pure, server-authoritative state machine.
-// One GameEngine instance owns exactly one GameRoom. Net/timer side effects
-// live outside; this file is deterministic given { rng, bank, now }.
+// One GameEngine instance owns exactly one GameRoom. Net side effects live
+// outside; this file is deterministic given { rng, bank, now }.
 //
-//   LOBBY --game:start--> BOARD --board:select--> PLAYING --(first buzz)--> LOCKED
-//                           ^                       |                        |
-//                           |     clip expired      v      judge             v
-//                           +------------------- REVEAL <--------------------+
-//                                                  | (host: next)
-//                                                  v
-//                              all cells used --> GAME_OVER
+//   LOBBY --game:start--> SETLIST --setlist:start--> ARMED --(first buzz)--> LOCKED
+//                            ^                        |                        |
+//                            |     question:reveal    v      judge:answer      v
+//                            +---------------------- REVEAL <------------------+
+//                                                      | (question:next)
+//                                                      v
+//                               every song used --> GAME_OVER   (also: host:forceEnd
+//                                                                from any phase)
+//
+// Nothing plays in our app: the host plays the song themselves from a native
+// YouTube Music link and then arms the buzzers. There is no timer of any kind.
 // ============================================================================
 import {
-  BOARD_COLUMNS,
-  BOARD_ROWS,
-  DEFAULT_CLIP_DURATION_SECONDS,
-  DEFAULT_CLIP_START_SECONDS,
   MAX_PLAYERS,
-  MAX_SUBSTITUTION_ATTEMPTS,
   MIN_PLAYERS,
-  POINT_VALUES,
+  SONG_POINT_VALUE,
   type ActiveQuestion,
-  type BankQuestion,
-  type BoardCell,
-  type BoardState,
   type GameRoom,
   type JudgeVerdict,
   type Player,
   type QuestionBank,
   type RoomPhase,
   type RoomSettings,
+  type SetlistSection,
+  type SetlistSong,
+  type SetlistState,
 } from '@setlist/shared';
 import { makeRng, type Rng } from './rng.js';
 
 export type EngineResult = { ok: true } | { ok: false; error: string };
 
-/** What the net layer needs to actually run a substitution search. */
-export type BeginRetryResult =
-  | {
-      ok: true;
-      retryId: string;
-      title: string;
-      artist: string;
-      excludeVideoIds: string[];
-      needSearch: boolean;
-    }
-  | { ok: false; error: string };
-
 const ok: EngineResult = { ok: true };
 const err = (error: string): EngineResult => ({ ok: false, error });
 
 /** Phases where a game is actually under way (used by pause/mid-game join). */
-const IN_PROGRESS_PHASES: RoomPhase[] = ['BOARD', 'PLAYING', 'LOCKED', 'REVEAL'];
+const IN_PROGRESS_PHASES: RoomPhase[] = ['SETLIST', 'ARMED', 'LOCKED', 'REVEAL'];
 
 export interface EngineDeps {
   rng?: Rng;
   bank: QuestionBank;
   now?: () => number;
-  clipStartSeconds?: number;
-  clipDurationSeconds?: number;
 }
 
 export interface JoinInput {
@@ -80,13 +65,6 @@ function makePlayerId(): string {
   playerSeq += 1;
   return `p_${playerSeq}_${Math.random().toString(36).slice(2, 8)}`;
 }
-let retryIdSeq = 0;
-/** Opaque per-search token. Its only job is to let a late search response
- *  recognise that the question it was searching for has moved on. */
-function makeRetryId(): string {
-  retryIdSeq += 1;
-  return `r${retryIdSeq}_${Math.random().toString(36).slice(2, 8)}`;
-}
 
 const DEFAULT_SETTINGS: RoomSettings = {
   penalizeWrongAnswers: true,
@@ -97,29 +75,20 @@ export class GameEngine {
   private readonly rng: Rng;
   private readonly bank: QuestionBank;
   private readonly now: () => number;
-  private readonly clipStartSeconds: number;
-  private readonly clipDurationSeconds: number;
-
-  /**
-   * The laid-out questions, keyed by cell questionId. Deliberately NOT on
-   * GameRoom: if the answers never live on the broadcastable model there is no
-   * way for a projector bug to leak them.
-   */
-  private questions = new Map<string, BankQuestion>();
   private joinCounter = 0;
 
   constructor(code: string, deps: EngineDeps) {
+    // Kept even though the setlist is built in bank order with no RNG: the room
+    // code generator uses its own, and removing the dep churns every harness.
     this.rng = deps.rng ?? makeRng();
     this.bank = deps.bank;
     this.now = deps.now ?? (() => Date.now());
-    this.clipStartSeconds = deps.clipStartSeconds ?? DEFAULT_CLIP_START_SECONDS;
-    this.clipDurationSeconds = deps.clipDurationSeconds ?? DEFAULT_CLIP_DURATION_SECONDS;
     this.room = {
       code,
       phase: 'LOBBY',
       settings: { ...DEFAULT_SETTINGS },
       players: [],
-      board: null,
+      setlist: null,
       active: null,
       winnerPlayerIds: [],
       castConnected: false,
@@ -146,6 +115,23 @@ export class GameEngine {
   /** Players who actually participate right now (not queued mid-join). */
   private activePlayers(): Player[] {
     return this.room.players.filter((p) => !p.pendingJoin);
+  }
+
+  /**
+   * Everyone who could still buzz on this question. The host is excluded (they
+   * picked the song), and so is `pickedByPlayerId` — the crown can move
+   * mid-round via transferHostOnDisconnect, and a demoted ex-host has already
+   * seen this song's answer.
+   */
+  private eligibleBuzzers(active: ActiveQuestion): Player[] {
+    const hostId = this.host()?.id;
+    return this.activePlayers().filter(
+      (p) =>
+        p.connected &&
+        p.id !== hostId &&
+        p.id !== active.pickedByPlayerId &&
+        !active.lockedOutPlayerIds.includes(p.id),
+    );
   }
 
   // ------------------------------------------------------------------ join
@@ -232,12 +218,14 @@ export class GameEngine {
   start(hostId: string): EngineResult {
     if (!this.isHost(hostId)) return err('Only the host can start the game.');
     if (this.room.phase !== 'LOBBY') return err('Game already started.');
-    // Same gate as pinpoint: the TV must be up before play begins — the board
-    // and the music both live there.
+    // Same gate as pinpoint: the TV must be up before play begins — it carries
+    // the room code, the join QR and the scoreboard.
     if (!this.room.castConnected) return err('Connect to the TV before starting.');
 
     const present = this.room.players.filter((p) => p.connected);
-    if (present.length < MIN_PLAYERS) return err(`Need at least ${MIN_PLAYERS} player.`);
+    if (present.length < MIN_PLAYERS) {
+      return err(`Need at least ${MIN_PLAYERS} players — the host doesn't buzz.`);
+    }
     if (present.length > MAX_PLAYERS) return err(`At most ${MAX_PLAYERS} players.`);
 
     for (const p of this.room.players) {
@@ -247,109 +235,68 @@ export class GameEngine {
     this.room.winnerPlayerIds = [];
     this.room.active = null;
 
-    const board = this.layOutBoard();
-    if (!board) return err('The question bank has no category with enough songs.');
-    this.room.board = board;
-    this.room.phase = 'BOARD';
+    const setlist = this.buildSetlist();
+    if (!setlist) return err('The question bank has no songs.');
+    this.room.setlist = setlist;
+    this.room.phase = 'SETLIST';
     return ok;
   }
 
   /**
-   * Board layout: take bank categories with at least BOARD_ROWS questions,
-   * shuffle them and use the first BOARD_COLUMNS, then pick BOARD_ROWS
-   * questions per category — both with the room's seeded RNG, so every game
-   * (not just song order within a category) gets a fresh board. A smaller
-   * bank yields a narrower board rather than a refusal to start — a user's
-   * first real bank may well be small.
+   * Flatten the bank into a browsable setlist: every category is a section,
+   * every question a song, in bank order (the host is deliberately browsing —
+   * a stable order beats a reshuffle). Songs are deduped by videoId, first
+   * section wins, so an AI-categorised bank that put one track in two themes
+   * can't offer it twice with two independent `used` flags.
    */
-  private layOutBoard(): BoardState | null {
-    const eligible = this.bank.categories.filter((c) => c.questions.length >= BOARD_ROWS);
-    if (eligible.length === 0) return null;
-    const chosen = this.rng.shuffle(eligible.slice()).slice(0, BOARD_COLUMNS);
+  private buildSetlist(): SetlistState | null {
+    const sections: SetlistSection[] = [];
+    const songs: SetlistSong[] = [];
+    const seenVideoIds = new Set<string>();
 
-    this.questions = new Map();
-    const cells: BoardCell[] = [];
-    chosen.forEach((cat, categoryIndex) => {
-      const pool = this.rng.shuffle(cat.questions.slice()).slice(0, BOARD_ROWS);
-      pool.forEach((q, rowIndex) => {
-        // Cell ids are positional and OPAQUE. Deriving them from the bank's
-        // question id would embed the videoId — which is projected on every
-        // public cell — and hand players the answer.
-        const questionId = `c${categoryIndex}r${rowIndex}`;
-        this.questions.set(questionId, q);
-        cells.push({
-          categoryIndex,
-          rowIndex,
-          value: POINT_VALUES[rowIndex] ?? POINT_VALUES[POINT_VALUES.length - 1]!,
-          questionId,
-          used: false,
-        });
+    this.bank.categories.forEach((cat, sectionIndex) => {
+      sections.push({ index: sectionIndex, id: cat.id, title: cat.title });
+      cat.questions.forEach((q, j) => {
+        if (seenVideoIds.has(q.videoId)) return;
+        seenVideoIds.add(q.videoId);
+        // Song ids are positional and OPAQUE. Deriving them from the bank's
+        // question id (`q_<videoId>`) would put a videoId on the wire — the id
+        // is projected publicly as PublicActiveQuestion.songId.
+        songs.push({ id: `s${sectionIndex}q${j}`, sectionIndex, question: q, used: false });
       });
     });
 
-    return {
-      categories: chosen.map((c) => ({ id: c.id, title: c.title })),
-      cells,
-    };
+    if (songs.length === 0) return null;
+    return { sections, songs };
   }
 
-  // ------------------------------------------------------------ board flow
-  selectCell(hostId: string, categoryIndex: number, rowIndex: number): EngineResult {
-    if (!this.isHost(hostId)) return err('Only the host can pick a square.');
-    if (this.room.phase !== 'BOARD') return err('Not picking a square right now.');
-    const board = this.room.board;
-    if (!board) return err('No board.');
-    const cell = board.cells.find(
-      (c) => c.categoryIndex === categoryIndex && c.rowIndex === rowIndex,
-    );
-    if (!cell) return err('No such square.');
-    if (cell.used) return err('That square has already been played.');
-    const question = this.questions.get(cell.questionId);
-    if (!question) return err('That square has no question.');
+  // ---------------------------------------------------------- setlist flow
+  /** Arm the buzzers on a chosen song. The host has already played it out loud. */
+  startSong(hostId: string, songId: string): EngineResult {
+    if (!this.isHost(hostId)) return err('Only the host can start a song.');
+    if (this.room.phase !== 'SETLIST') return err('Not choosing a song right now.');
+    const setlist = this.room.setlist;
+    if (!setlist) return err('No setlist.');
+    const song = setlist.songs.find((s) => s.id === songId);
+    if (!song) return err('No such song.');
+    if (song.used) return err('That song has already been played.');
 
-    cell.used = true;
-    const startSeconds = this.resolveStartSeconds(question);
-    const prevToken = this.room.active?.playToken ?? 0;
+    song.used = true;
     this.room.active = {
-      cell,
-      question,
+      songId: song.id,
+      sectionIndex: song.sectionIndex,
+      question: song.question,
+      pickedByPlayerId: hostId,
       startedAt: this.now(),
-      startSeconds,
-      durationSeconds: this.clipDurationSeconds,
       lockedPlayerId: null,
       lockedAt: null,
       lockedOutPlayerIds: [],
       verdict: null,
       awarded: 0,
       revealed: false,
-      playToken: prevToken + 1,
-      playbackError: null,
-      timedOut: false,
-      // A brand-new active question resets the whole substitution state — this
-      // is the only place retryAttempts goes back to 0, which is what makes the
-      // 3-attempt cap per-question.
-      retrying: false,
-      retryAttempts: 0,
-      retryCandidates: [],
-      substituteVideoId: null,
-      retryId: null,
-      lastPlaybackErrorMessage: null,
     };
-    this.room.phase = 'PLAYING';
+    this.room.phase = 'ARMED';
     return ok;
-  }
-
-  /**
-   * Clip offset (see the plan §2.3): a hand-tuned per-question `startSeconds`
-   * wins; otherwise the configured constant, clamped so a short track doesn't
-   * start past its own end. No hook detection — that is explicitly out of scope.
-   */
-  private resolveStartSeconds(q: BankQuestion): number {
-    if (q.startSeconds !== null && q.startSeconds >= 0) return q.startSeconds;
-    const wanted = this.clipStartSeconds;
-    if (q.durationSeconds === null) return wanted;
-    const latest = Math.max(0, q.durationSeconds - this.clipDurationSeconds - 5);
-    return Math.min(wanted, latest);
   }
 
   // ------------------------------------------------------------- the race
@@ -366,9 +313,12 @@ export class GameEngine {
     // The lock guard comes first so a loser in the race gets the accurate
     // "Already locked in." rather than a generic phase error.
     if (active?.lockedPlayerId != null) return err('Already locked in.');
-    if (this.room.phase !== 'PLAYING' || !active) return err('Buzzers are not armed.');
-    // Nobody buzzes in on a song that isn't actually playing yet.
-    if (active.retrying) return err('Finding another version…');
+    if (this.room.phase !== 'ARMED' || !active) return err('Buzzers are not armed.');
+    // The host picked and played this song, so they already know the answer.
+    // `pickedByPlayerId` keeps a demoted ex-host excluded for the whole round.
+    if (this.isHost(playerId) || playerId === active.pickedByPlayerId) {
+      return err("The host doesn't buzz on this one.");
+    }
     const p = this.player(playerId);
     if (!p) return err('No such player.');
     if (!p.connected) return err('You are disconnected.');
@@ -390,7 +340,7 @@ export class GameEngine {
     const buzzer = this.player(active.lockedPlayerId);
     if (!buzzer) return err('The buzzed-in player is gone.');
 
-    const value = active.cell.value;
+    const value = SONG_POINT_VALUE;
     const half = value / 2;
     const anyCorrect = verdict.titleCorrect || verdict.artistCorrect;
 
@@ -417,178 +367,27 @@ export class GameEngine {
     active.lockedAt = null;
     active.verdict = null;
 
-    const stillIn = this.activePlayers().filter(
-      (p) => p.connected && !active.lockedOutPlayerIds.includes(p.id),
-    );
-    if (stillIn.length === 0) {
+    // Nobody eligible is left (the host and the picker never count) — reveal
+    // rather than hang in ARMED with a dead buzzer pool.
+    if (this.eligibleBuzzers(active).length === 0) {
       active.revealed = true;
       this.room.phase = 'REVEAL';
       return ok;
     }
 
-    // Resume the clip for whoever is left.
-    active.playToken += 1;
-    active.startedAt = this.now();
-    this.room.phase = 'PLAYING';
+    this.room.phase = 'ARMED';
     return ok;
   }
 
-  skipQuestion(hostId: string): EngineResult {
-    if (!this.isHost(hostId)) return err('Only the host can skip a question.');
-    if (this.room.phase !== 'PLAYING' && this.room.phase !== 'LOCKED') {
-      return err('No question in play.');
+  /** Host ends the round and shows the answer. The only way a round ends
+   *  without a correct answer — there is no timer. */
+  revealQuestion(hostId: string): EngineResult {
+    if (!this.isHost(hostId)) return err('Only the host can reveal the answer.');
+    if (this.room.phase !== 'ARMED' && this.room.phase !== 'LOCKED') {
+      return err('No song in play.');
     }
     const active = this.room.active;
-    if (!active) return err('No question in play.');
-    active.lockedPlayerId = null;
-    active.lockedAt = null;
-    active.revealed = true;
-    // A REVEAL screen must never render "finding another version…". An
-    // in-flight search is neutralized by playSubstitute()'s phase guard.
-    active.retrying = false;
-    this.room.phase = 'REVEAL';
-    return ok;
-  }
-
-  /** The clip ran its full length with nobody buzzing. Driven by a net-layer timer. */
-  clipExpired(): EngineResult {
-    if (this.room.phase !== 'PLAYING') return err('No clip is playing.');
-    const active = this.room.active;
-    if (!active) return err('No clip is playing.');
-    active.revealed = true;
-    active.retrying = false; // see skipQuestion
-
-    active.timedOut = true;
-    this.room.phase = 'REVEAL';
-    return ok;
-  }
-
-  replayClip(hostId: string): EngineResult {
-    if (!this.isHost(hostId)) return err('Only the host can replay the clip.');
-    const active = this.room.active;
-    if (!active) return err('No question in play.');
-    if (this.room.phase !== 'PLAYING') return err('The clip is not playing.');
-    active.playToken += 1;
-    active.startedAt = this.now();
-    return ok;
-  }
-
-  // ------------------------------------------------- runtime substitution
-  // A video can be embeddable everywhere except our domain (YouTube exposes no
-  // API for per-domain embed allowlists), so the only way to find out is to
-  // fail live. When that happens the net layer searches for an alternate upload
-  // of the same song and we play that instead — up to MAX_SUBSTITUTION_ATTEMPTS
-  // times, after which we land in exactly the pre-feature state: playbackError
-  // set, host taps Skip.
-  //
-  // Everything here is pure: the engine mints a retry, accepts its outcome and
-  // represents the retrying state. The fetch lives in net/server.ts.
-
-  /**
-   * The receiver's YouTube player errored or stalled. Surfaces to the host as
-   * "Skip" unless the net layer decides to retry (see beginRetry).
-   */
-  reportPlaybackError(message: string, playToken?: number): EngineResult {
-    const active = this.room.active;
-    if (!active) return err('No question in play.');
-    // A late onError from a video we have already superseded with a substitute.
-    if (playToken !== undefined && playToken < active.playToken) {
-      return err('Stale playback error.');
-    }
-    // YouTube can fire onError more than once for a single load.
-    if (active.retrying) return err('Already retrying.');
-    active.lastPlaybackErrorMessage = message;
-    active.playbackError = message;
-    return ok;
-  }
-
-  /**
-   * Mint a retry. Called by the net layer right after a successful
-   * reportPlaybackError, and only when a YouTube search client is configured.
-   * This is the ONLY place the attempt cap is enforced — nothing the receiver
-   * sends can influence it.
-   */
-  beginRetry(): BeginRetryResult {
-    const active = this.room.active;
-    if (!active) return { ok: false, error: 'No question in play.' };
-    if (this.room.phase !== 'PLAYING') return { ok: false, error: 'Not playing.' };
-    if (active.retrying) return { ok: false, error: 'Already retrying.' };
-    if (active.retryAttempts >= MAX_SUBSTITUTION_ATTEMPTS) {
-      return { ok: false, error: 'Out of substitution attempts.' };
-    }
-
-    active.retrying = true;
-    // While retrying the room shows the retry indicator, not the error banner.
-    // lastPlaybackErrorMessage keeps the text for the eventual fallback.
-    active.playbackError = null;
-
-    // One search per failed question: attempt 2 replays the list we already
-    // have, so it needs no I/O and therefore no stale guard.
-    const needSearch = active.retryCandidates.length === 0 && active.retryAttempts === 0;
-    active.retryId = needSearch ? makeRetryId() : null;
-
-    const excludeVideoIds = [active.question.videoId];
-    if (active.substituteVideoId) excludeVideoIds.push(active.substituteVideoId);
-
-    return {
-      ok: true,
-      retryId: active.retryId ?? '',
-      title: active.question.title,
-      artist: active.question.artist,
-      excludeVideoIds,
-      needSearch,
-    };
-  }
-
-  /**
-   * Accept the outcome of the one search. The retryId equality check is the
-   * single most important correctness guard in this feature: selectCell() builds
-   * a brand-new active object and nextQuestion() nulls it, so a search that
-   * resolves after the question moved on can never touch the new question.
-   */
-  resolveRetrySearch(retryId: string, videoIds: string[]): EngineResult {
-    const active = this.room.active;
-    if (!active) return err('No question in play.');
-    if (active.retryId !== retryId) return err('Stale retry.');
-    active.retryCandidates = videoIds.slice(0, MAX_SUBSTITUTION_ATTEMPTS);
-    return ok;
-  }
-
-  /** Consume the next candidate and restart playback on it. */
-  playSubstitute(): EngineResult {
-    const active = this.room.active;
-    if (!active) return err('No question in play.');
-    // skipQuestion() reveals without nulling `active`, so retryId alone would
-    // not catch a search that resolves after the host skipped. This does.
-    if (this.room.phase !== 'PLAYING') return err('Not playing.');
-    if (!active.retrying) return err('Not retrying.');
-    const next = active.retryCandidates.shift();
-    if (!next) return err('No candidate.');
-    active.substituteVideoId = next;
-    active.retryAttempts += 1;
-    active.retrying = false;
-    active.playbackError = null;
-    // The entire delivery mechanism: toPrivateState re-projects receiverPlayback
-    // on every broadcast, and YouTubePlayer's command effect loads a new video
-    // whenever playToken changes. Also re-arms the clip timer cleanly.
-    active.playToken += 1;
-    active.startedAt = this.now();
-    return ok;
-  }
-
-  /**
-   * Give up on substitution. Every alternate we tried also failed to play, so
-   * there's nothing left for a host to usefully Skip past — auto-reveal
-   * instead, exactly like skipQuestion(), so the game keeps moving without
-   * requiring anyone to notice and click Skip.
-   */
-  exhaustRetries(): EngineResult {
-    const active = this.room.active;
-    if (!active) return err('No question in play.');
-    active.retrying = false;
-    active.playbackError = active.lastPlaybackErrorMessage ?? active.playbackError;
-    active.retryCandidates = [];
-    active.retryId = null;
+    if (!active) return err('No song in play.');
     active.lockedPlayerId = null;
     active.lockedAt = null;
     active.revealed = true;
@@ -604,11 +403,11 @@ export class GameEngine {
     for (const p of this.room.players) p.pendingJoin = false;
 
     this.room.active = null;
-    const allUsed = (this.room.board?.cells ?? []).every((c) => c.used);
+    const allUsed = (this.room.setlist?.songs ?? []).every((s) => s.used);
     if (allUsed) {
       this.endGame();
     } else {
-      this.room.phase = 'BOARD';
+      this.room.phase = 'SETLIST';
     }
     return ok;
   }
@@ -624,12 +423,11 @@ export class GameEngine {
   rematch(hostId: string): EngineResult {
     if (!this.isHost(hostId)) return err('Only the host can start a rematch.');
     this.room.phase = 'LOBBY';
-    this.room.board = null;
+    this.room.setlist = null;
     this.room.active = null;
     this.room.winnerPlayerIds = [];
     this.room.pause = { active: false, reason: null, waitingForPlayerId: null };
     this.room.phaseBeforePause = null;
-    this.questions = new Map();
     for (const p of this.room.players) {
       p.score = 0;
       p.pendingJoin = false;
@@ -667,15 +465,13 @@ export class GameEngine {
     }
 
     // A dropped player may have been the last one able to answer the question.
+    // In a 2-player room this also covers the host dropping mid-round: the
+    // crown moves to the only other player, who is instantly ineligible, so
+    // the pool empties and the question must auto-reveal rather than hang.
     const active = this.room.active;
-    if (active && this.room.phase === 'PLAYING') {
-      const stillIn = this.activePlayers().filter(
-        (pl) => pl.connected && !active.lockedOutPlayerIds.includes(pl.id),
-      );
-      if (stillIn.length === 0) {
-        active.revealed = true;
-        this.room.phase = 'REVEAL';
-      }
+    if (active && this.room.phase === 'ARMED' && this.eligibleBuzzers(active).length === 0) {
+      active.revealed = true;
+      this.room.phase = 'REVEAL';
     }
     return ok;
   }
@@ -690,7 +486,7 @@ export class GameEngine {
     if (active?.lockedPlayerId === playerId) {
       active.lockedPlayerId = null;
       active.lockedAt = null;
-      if (this.room.phase === 'LOCKED') this.room.phase = 'PLAYING';
+      if (this.room.phase === 'LOCKED') this.room.phase = 'ARMED';
     }
     if (this.room.phase === 'PAUSED') this.maybeResume();
     return ok;
@@ -742,16 +538,16 @@ export class GameEngine {
   /** Drives PrivateState.canBuzz — the phone's buzz button enablement. */
   canBuzz(playerId: string): boolean {
     const active = this.room.active;
-    if (this.room.phase !== 'PLAYING' || !active) return false;
+    if (this.room.phase !== 'ARMED' || !active) return false;
     if (active.lockedPlayerId !== null) return false;
-    if (active.retrying) return false; // mid-substitution: no song is playing
+    if (this.isHost(playerId) || playerId === active.pickedByPlayerId) return false;
     if (active.lockedOutPlayerIds.includes(playerId)) return false;
     const p = this.player(playerId);
     return !!p && p.connected && !p.pendingJoin;
   }
 
-  /** Category title for a laid-out cell (public — it's a board header). */
-  categoryTitle(categoryIndex: number): string {
-    return this.room.board?.categories[categoryIndex]?.title ?? '';
+  /** Section title for the active song (public — it's the theme header). */
+  sectionTitle(sectionIndex: number): string {
+    return this.room.setlist?.sections[sectionIndex]?.title ?? '';
   }
 }

@@ -1,7 +1,7 @@
-// Acceptance criterion #6, over real sockets: several clients buzz in the same
-// tick and exactly one of them wins, every time.
+// The buzz race, over real sockets: several clients buzz in the same tick and
+// exactly one of them wins, every time. players[0] is the host and never wins.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { makeRoom, startTestServer, tick, type TestServer } from './harness.js';
+import { armRound, makeRoom, startTestServer, tick, type TestServer } from './harness.js';
 
 let server: TestServer;
 
@@ -13,21 +13,26 @@ afterEach(async () => {
 });
 
 describe('buzz race over sockets', () => {
-  it('resolves 4 simultaneous buzzes to exactly one winner, 50 rooms running', async () => {
+  it('resolves 4 simultaneous buzzes to exactly one non-host winner, 50 rooms running', async () => {
     const ROUNDS = 50;
     for (let round = 0; round < ROUNDS; round++) {
       const { receiver, players, closeAll } = await makeRoom(server.port, 4);
       const host = players[0]!;
-      await host.emit('game:start', {});
-      await host.emit('board:select', { categoryIndex: round % 5, rowIndex: round % 5 });
-      await tick();
-      expect(host.pub?.phase).toBe('PLAYING');
+      await armRound(host);
+      expect(host.pub?.phase).toBe('ARMED');
 
-      // All four fire without awaiting each other — the server decides.
+      // All four fire without awaiting each other — the server decides. The
+      // host is one of them and must always lose, on the exclusion rule.
       const acks = await Promise.all(players.map((c) => c.emit('buzz:press', {})));
-      const winners = acks.filter((a) => a.ok);
+      const hostAck = acks[0]!;
+      expect(hostAck, `round ${round} host`).toEqual({
+        ok: false,
+        error: "The host doesn't buzz on this one.",
+      });
+      const contenderAcks = acks.slice(1);
+      const winners = contenderAcks.filter((a) => a.ok);
       expect(winners, `round ${round}`).toHaveLength(1);
-      const losers = acks.filter((a) => !a.ok);
+      const losers = contenderAcks.filter((a) => !a.ok);
       for (const l of losers) {
         expect(l.ok).toBe(false);
         if (!l.ok) expect(l.error).toBe('Already locked in.');
@@ -51,14 +56,12 @@ describe('buzz race over sockets', () => {
   it('a locked-out player cannot re-enter the race for the same question', async () => {
     const { players, closeAll } = await makeRoom(server.port, 3);
     const [host, a, b] = players as [(typeof players)[0], (typeof players)[0], (typeof players)[0]];
-    await host.emit('game:start', {});
-    await host.emit('board:select', { categoryIndex: 0, rowIndex: 0 });
-    await tick();
+    await armRound(host);
 
     expect(await a.emit('buzz:press', {})).toEqual({ ok: true, data: {} });
     await host.emit('judge:answer', { titleCorrect: false, artistCorrect: false });
     await tick();
-    expect(a.pub?.phase).toBe('PLAYING');
+    expect(a.pub?.phase).toBe('ARMED');
     expect(a.priv?.canBuzz).toBe(false);
     expect(b.priv?.canBuzz).toBe(true);
 

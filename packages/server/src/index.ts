@@ -6,16 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import express from 'express';
 import { Server } from 'socket.io';
-import {
-  DEFAULT_CLIP_DURATION_SECONDS,
-  DEFAULT_CLIP_START_SECONDS,
-  SOCKET_PATH,
-} from '@setlist/shared';
+import { SOCKET_PATH } from '@setlist/shared';
 import { loadQuestionBank } from './questions/bank.js';
 import { RoomManager } from './net/rooms.js';
 import { attachSocketServer } from './net/server.js';
-import { createYouTubeSearchClient } from './net/youtube.js';
-import { loadRootEnv, readAppVersion, youtubeApiKey } from './env.js';
+import { loadRootEnv, readAppVersion } from './env.js';
 
 loadRootEnv();
 
@@ -25,10 +20,6 @@ const APP_VERSION = readAppVersion();
 const PORT = Number(process.env.PORT ?? 3001);
 const CAST_RECEIVER_APP_ID = process.env.CAST_RECEIVER_APP_ID ?? '';
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? 'http://localhost:5173';
-const CLIP_START_SECONDS = Number(process.env.CLIP_START_SECONDS ?? DEFAULT_CLIP_START_SECONDS);
-const CLIP_DURATION_SECONDS = Number(
-  process.env.CLIP_DURATION_SECONDS ?? DEFAULT_CLIP_DURATION_SECONDS,
-);
 
 // --- Question bank: real file if present, bundled fixture otherwise ---
 const loaded = loadQuestionBank();
@@ -39,10 +30,7 @@ console.log(
   `[startup] bank source: ${loaded.source} (${loaded.bank.categories.length} categories)`,
 );
 
-const rooms = new RoomManager(loaded.bank, {
-  clipStartSeconds: CLIP_START_SECONDS,
-  clipDurationSeconds: CLIP_DURATION_SECONDS,
-});
+const rooms = new RoomManager(loaded.bank);
 
 // --- HTTP + static client ---
 const app = express();
@@ -103,15 +91,7 @@ const io = new Server(httpServer, {
   pingTimeout: 60_000,
 });
 
-// Runtime song substitution. loadRootEnv() ran at the top of this file, so
-// process.env is populated by now. No key = feature entirely inert.
-const YT_KEY = youtubeApiKey();
-const youtube = YT_KEY ? createYouTubeSearchClient({ apiKey: YT_KEY }) : null;
-console.log(
-  `[startup] song substitution: ${youtube ? 'enabled' : 'disabled (no YOUTUBE_API_KEY)'}`,
-);
-
-attachSocketServer(io, rooms, { youtube });
+attachSocketServer(io, rooms);
 
 httpServer.listen(PORT, () => {
   console.log(`[startup] Setlist v${APP_VERSION} on :${PORT} (socket ${SOCKET_PATH})`);

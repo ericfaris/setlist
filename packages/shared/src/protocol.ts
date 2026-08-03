@@ -34,27 +34,15 @@ export interface ClientToServer {
   /** TV receiver: no room code yet, wait for the host to cast. */
   'receiver:standby': (_: {}) => void;
 
-  /**
-   * TV receiver: the YouTube player errored or stalled on the active clip.
-   * `playToken` is the token the failing load was for — optional so older
-   * clients keep working. The server ignores a report older than the active
-   * question's current token, which kills a late onError from a video that has
-   * already been superseded by a substitute.
-   */
-  'receiver:playbackError': (payload: { message: string; playToken?: number }) => void;
-
-  /** Host starts the game: LOBBY -> BOARD (lays out the board). */
+  /** Host starts the game: LOBBY -> SETLIST (builds the setlist). */
   'game:start': (_: {}, ack: (res: Ack<{}>) => void) => void;
   /** Host updates room settings (lobby only). */
   'game:settings': (payload: Partial<{ penalizeWrongAnswers: boolean }>) => void;
   /** Host hands the crown to another connected player. */
   'host:transfer': (payload: { playerId: string }, ack: (res: Ack<{}>) => void) => void;
 
-  /** Host picks a board cell: BOARD -> PLAYING. */
-  'board:select': (
-    payload: { categoryIndex: number; rowIndex: number },
-    ack: (res: Ack<{}>) => void,
-  ) => void;
+  /** Host arms the round on a chosen setlist song: SETLIST -> ARMED. */
+  'setlist:start': (payload: { songId: string }, ack: (res: Ack<{}>) => void) => void;
 
   /**
    * The race. Deliberately carries NO timestamp field — buzz order is decided
@@ -62,13 +50,11 @@ export interface ClientToServer {
    */
   'buzz:press': (_: {}, ack: (res: Ack<{}>) => void) => void;
 
-  /** Host marks the locked-in answer: LOCKED -> PLAYING (wrong) | REVEAL (right). */
+  /** Host marks the locked-in answer: LOCKED -> ARMED (wrong) | REVEAL (right). */
   'judge:answer': (payload: JudgeVerdict, ack: (res: Ack<{}>) => void) => void;
-  /** Host abandons the question: -> REVEAL, no points. */
-  'question:skip': (_: {}, ack: (res: Ack<{}>) => void) => void;
-  /** Host replays the clip from the top (bumps playToken). */
-  'playback:replay': (_: {}, ack: (res: Ack<{}>) => void) => void;
-  /** Host advances: REVEAL -> BOARD | GAME_OVER. */
+  /** Host ends the round and shows the answer: -> REVEAL. */
+  'question:reveal': (_: {}, ack: (res: Ack<{}>) => void) => void;
+  /** Host advances: REVEAL -> SETLIST | GAME_OVER. */
   'question:next': (_: {}, ack: (res: Ack<{}>) => void) => void;
 
   /** Host force-ends or restarts. */
@@ -82,7 +68,7 @@ export interface ServerToClient {
   'host:created': (payload: { code: string }) => void;
   /** Full public room projection (broadcast to all clients in the room). */
   'room:state': (payload: PublicRoom) => void;
-  /** Per-socket private state (your seat, host answer, receiver playback). */
+  /** Per-socket private state (your seat, host answer, host setlist). */
   'you:state': (payload: PrivateState) => void;
   /** Room closed / no longer exists. */
   'room:closed': (payload: { reason: string }) => void;

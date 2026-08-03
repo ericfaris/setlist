@@ -1,13 +1,19 @@
 # Setlist
 
-A real-time multiplayer party game: a Jeopardy-style board of **categories ×
-point values**, where each category is one of your own **YouTube Music
-playlists** and each square is a song from it. The board lives on a TV (a real
-Chromecast, or just a browser tab), a clip plays through an embedded YouTube
-player, and everyone buzzes in on their own phone. The **first buzz the server
-receives** wins — no client timing is trusted. A designated host then marks the
-answer right or wrong for the song title and the artist, and scores update
-everywhere at once.
+A real-time multiplayer party game and, deliberately, not much more than a
+**scorekeeper with a fair buzz race**. The host browses a themed **setlist**
+built from their own **YouTube Music playlists**, taps a song to get a native
+`music.youtube.com` link, plays it out loud on their own device (phone speaker,
+Bluetooth speaker, whatever), then arms the buzzers. Everyone else buzzes in on
+their own phone; the **first buzz the server receives** wins — no client timing
+is trusted. The host marks the answer right or wrong for the song title and the
+artist, and scores update everywhere at once.
+
+Our app never embeds or plays any media. That is the whole design: YouTube's
+per-domain embed allowlist makes embedded playback unreliable for a large share
+of real music content, while YouTube's own app has no such restriction. The TV
+(a real Chromecast, or just a browser tab) shows the room code, join QR, live
+scoreboard and buzz-lock status — and nothing else.
 
 ## Architecture
 
@@ -21,14 +27,17 @@ A TypeScript monorepo (npm workspaces):
 
 The server is the single source of truth. Clients send *intents*; the server
 validates them against the engine and broadcasts spectator-safe projections.
-Three things are never sent to a client that shouldn't see them:
+Two things are never sent to a client that shouldn't see them:
 
-- the **answer** (song title + artist) — host only, until the reveal;
-- the **YouTube video id** — the TV receiver only (a player who saw it could
-  simply look the song up);
-- **unplayed squares' song data** — nobody, ever.
+- the **answer** (song title + artist) — the host's own socket only, until the
+  reveal;
+- the **setlist's song data** (titles, artists, video ids) — the host's own
+  socket only, and only while they're browsing. The host has to pick and play
+  the songs, so they legitimately know them; nobody else may.
 
-The Chromecast receiver is a read-only WebSocket client rendering a TV view.
+The Chromecast receiver is a read-only WebSocket client rendering a TV view. It
+plays no media and is now the **least privileged surface in the system** — its
+private state is empty.
 
 ## Develop
 
@@ -46,38 +55,44 @@ local play: the host screen has an **"Open TV view"** button that opens
 `/receiver.html?code=NNNN` in a browser tab. That is the supported no-Chromecast
 path and the way everything here is normally tested.
 
-In a browser tab the first clip may need one tap — the receiver shows a
-**"▶ Tap to enable audio"** cover, because browsers block unmuted autoplay until
-a user gesture. On a real Chromecast this generally never appears.
-
 The app ships with a **sample question bank**, so it is fully playable with no
 YouTube Music credentials at all.
 
 ## How the game works
 
-- **Board** — 5 categories × 5 rows. Row *n* is worth `(n + 1) × 100`, i.e.
-  100 / 200 / 300 / 400 / 500. Categories are the first playlists in your bank
-  that have at least 5 songs; the 5 songs per column are drawn with the room's
-  seeded RNG, so a rematch reshuffles. A smaller bank makes a narrower board
-  rather than refusing to start.
-- **Clip** — plays from `CLIP_START_SECONDS` (default 30s) for
-  `CLIP_DURATION_SECONDS` (default 20s). 30 seconds is a dumb constant that lands
-  in the body of most songs; starting at 0:00 usually gets you silence or an
-  intro. A question may override it with its own `startSeconds` in the bank
-  (hand-edited). There is no hook detection and there isn't going to be.
-- **Buzz** — first message the server processes wins the lock, full stop. The
-  music pauses; everyone else's button shows "🔒 *name* buzzed in".
-- **Scoring** — for a square worth *V*: correct title = **+V/2**, correct artist
-  = **+V/2**, so a fully correct answer is exactly *V*. Wrong on both costs
-  **−V/2** (a deterrent against blind buzzing); that penalty is a lobby setting,
-  `Penalise a wrong answer`, on by default. A wrong answer locks that player out
-  of the current question and re-arms everyone else — the clip resumes. When
-  everybody has missed, or the clip runs out, the answer is revealed.
+- **Setlist** — every bank category becomes a **section**, every song a row, in
+  bank order (no shuffle — the host is deliberately browsing). The host's phone
+  shows section headers with a remaining count, a search box that filters across
+  titles and artists, and dims songs already played (`✓ played`) so nothing gets
+  picked twice. Songs are deduped by video id while flattening, so a track the AI
+  categoriser put in two themes only appears once.
+- **Host playback** — tap a song → see its title, artist and section, plus
+  **▶ Open in YouTube Music** (a native `music.youtube.com/watch?v=…` link, which
+  has no embed restrictions). Play it however you like, then tap
+  **🔔 Start round — arm buzzers**. Tapping a song is purely local to the host's
+  browser; the server learns nothing until Start, so buzzing can never be live
+  merely because a song was tapped. There is **no timer of any kind** — the host
+  reveals manually when they decide the round is over.
+- **Buzz** — first message the server processes wins the lock, full stop.
+  Everyone else's button shows "🔒 *name* buzzed in".
+- **Scoring** — a flat **100 points** per song: correct title = **+50**, correct
+  artist = **+50**, both = **+100**. Wrong on both costs **−50** (a deterrent
+  against blind buzzing); that penalty is a lobby setting, `Penalise a wrong
+  answer`, on by default. A wrong answer locks that player out of the current
+  song and re-arms everyone else; when nobody eligible is left the answer is
+  revealed automatically.
 - **Host** — the first player to join a room is the host (normally whoever set
-  the TV up). The host picks squares, judges answers, skips, replays and
-  advances. The crown can be handed to anyone with **Make host** in the lobby,
-  and moves automatically if the host disconnects — preferring a device that can
-  cast. There's exactly one host at a time.
+  the TV up). The host **never buzzes** — they picked and played the song, so
+  they're the facilitator and judge, not a contestant. They browse the setlist,
+  arm rounds, judge answers, reveal, advance, and can end the game at any time
+  with **🏁 End game & show scores** (with a 36–64-song bank, "all songs used" is
+  effectively unreachable). The crown can be handed to anyone with **Make host**
+  in the lobby and moves automatically if the host disconnects, preferring a
+  device that can cast — but note that whoever holds it becomes a permanent
+  non-player for as long as they hold it, and anyone who has ever held it has
+  seen the whole setlist. Don't rotate the host mid-game unless you're happy with
+  both. There's exactly one host at a time, and a game needs at least **2
+  players**.
 
 ## Question bank
 
@@ -147,7 +162,7 @@ title substring, default: all of them), `--max-categories` (8),
 
 Songs with no `videoId`, no title or no artist are skipped, as are unavailable
 tracks; a video id appearing in two playlists is kept only once, so no two
-squares share an answer. Playlists with too few usable songs are dropped with a
+setlist rows share an answer. Playlists with too few usable songs are dropped with a
 warning.
 
 Output goes to `question-bank/bank.json` (gitignored — it's your data). The
@@ -156,8 +171,8 @@ logging a warning, if the file is missing or invalid.
 
 ### Community playlists and AI categories
 
-Pull songs from playlists you don't own, and let Claude invent the board
-categories instead of using one category per playlist.
+Pull songs from playlists you don't own, and let Claude invent the setlist
+sections instead of using one category per playlist.
 
 ```bash
 # a public playlist by id or pasted share URL (repeatable)
@@ -196,7 +211,7 @@ sources only, excluding your library entirely.
 `ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`). It's one batch call per
 run, sending only song titles and artists — never video ids — and the AI only
 groups, titles and flags songs `ytmusicapi` already returned. It never invents a
-song. `--categories N` (default 5, matching the board's 5 columns) sets how many
+song. `--categories N` (default 5) sets how many
 categories to ask for; `--max-categories` still caps how many *source playlists*
 are read. The prompt also asks the model to favor **decade diversity** — if
 enough 1960s/1970s songs are in the pool, it's told to carve out a category for
@@ -217,28 +232,13 @@ never fails the run. `--no-ai` forces that path.
 Both env vars are read by the **Python builder only** — the Node server has no
 Anthropic dependency.
 
-**Embeddable pre-check**: some official/label-uploaded videos have embedding
-disabled by the rights holder — they can't play in *any* embedded player,
-anywhere, on any site (not a bug, a per-video YouTube setting). Set
-`YOUTUBE_API_KEY` (a plain Google/YouTube Data API v3 key, separate from the
-`ytmusicapi` OAuth/browser auth above) and the builder checks every pooled
-song's real embeddable status before it ever reaches the board, dropping any
-that would fail. `YOUTUBE_API_KEY` is read by both the builder and the Node
-server (see below) — it is not builder-only. Without the key this step is
-skipped and a bad video instead surfaces as an in-game "Embedding disabled"
-error the host can Skip past.
-
-**Runtime song substitution**: the `status.embeddable` flag cannot see
-per-domain embed allowlists, so some videos still fail live with error 101/150.
-When that happens the Node server (which now also reads `YOUTUBE_API_KEY`)
-searches the YouTube Data API v3 for an alternate upload of the same song,
-verifies the title/artist plausibly match, and plays it — up to 3 attempts, with
-a "finding another version…" indicator and buzzers disabled throughout. If all
-three also fail, the question auto-skips (reveals) with no host action needed —
-there's nothing left to usefully Skip past. If `YOUTUBE_API_KEY` is unset,
-substitution never kicks in and a failure falls straight to the host's manual
-Skip, exactly as before this feature existed. Costs 100 quota units per failed
-song against the 10,000/day default.
+**Embeddable pre-check (legacy, off by default)**: `--youtube-api-key` runs an
+optional pass that drops songs whose *embedding* is disabled by the rights
+holder. It is **no longer needed** — the game plays songs through native YouTube
+Music links, which have no embed restrictions at all — so it no longer defaults
+to `YOUTUBE_API_KEY` and only runs when you pass the flag explicitly. The code
+and its tests are kept because they're harmless and self-contained. The Node
+server never reads `YOUTUBE_API_KEY`.
 
 ### Schema
 
@@ -274,13 +274,15 @@ song against the 10,000/day default.
   slug of its title plus a short SHA-1 of it — also derived, also stable.
 - `playlistId` is the single source playlist a category came from, or `null` for
   an AI-generated category (which pulls from many playlists at once).
-- `value` is a **suggestion**. The engine assigns the authoritative value from
-  the board row when it lays the game out — don't "fix" the redundancy.
-- `startSeconds: null` means "use `CLIP_START_SECONDS`". Hand-editable per song.
-- `durationSeconds` may be `null`; it is only used to clamp the clip offset so a
-  short track doesn't start past its own end.
-- `videoId` is the only field the receiver needs, and the one field never sent
-  to a player.
+- `value` is **ignored by the engine** — scoring is a flat 100 per song. It
+  stays in the file because the builder writes it and the validator still
+  requires it; the on-disk format is deliberately unchanged. Don't "fix" the
+  redundancy.
+- `startSeconds` and `durationSeconds` are **unused by the app** (there are no
+  clips any more). The builder still writes them and the validator still accepts
+  them.
+- `videoId` is the field the **host** needs to build the YouTube Music link, and
+  the one field never sent to another player or to the TV.
 
 ## Test
 
@@ -290,11 +292,16 @@ scripts/questionbank/.venv/bin/python -m unittest discover -s scripts/questionba
 ```
 
 The server suite covers the buzz race (including 50 rooms × 4 simultaneous
-buzzes over real sockets, asserting exactly one winner each), the scoring
-matrix at every point value, board layout, phase transitions, the host role,
-and the spectator-safe rule — asserted after every mutation, so a projection
-that leaked a video id or an early answer would fail the build. The Python
-tests mock the `YTMusic` client entirely; nothing here touches the network.
+buzzes over real sockets, asserting exactly one winner among the non-hosts each
+time and that the host is always rejected), the flat scoring matrix, setlist
+construction and `used` tracking, phase transitions, the host role and its
+exclusion from buzzing (including the 2-player deadlock case where the host
+drops mid-round), and the spectator-safe rule — asserted after every mutation,
+so a projection that leaked a video id, a setlist title or an early answer would
+fail the build. The client suite covers the buzz button, the setlist browser
+(including an explicit "a non-host sees no song titles at all" test) and the
+host judging panel. The Python tests mock the `YTMusic` client entirely; nothing
+here touches the network.
 
 ## Build & run (production)
 
@@ -305,10 +312,17 @@ node packages/server/dist/index.js   # serves client + Socket.IO on $PORT
 
 ## Deployment
 
-Not set up yet. It will follow the sibling `pinpoint` project's pattern —
-self-hosted Docker container behind a Cloudflare Tunnel, configured from a local
-`.env` — as a separate, later step. In production `PUBLIC_BASE_URL` must point
-at the public hostname so the QR join link on the TV is reachable from phones.
+Self-hosted Docker behind a Cloudflare Tunnel:
+
+```bash
+docker compose up -d --build
+```
+
+Image `ericfaris/setlist:latest`, container `setlist-app-1`, bound to
+`127.0.0.1:8900`, publicly reachable at <https://setlist.mooseflip.com>. In
+production `PUBLIC_BASE_URL` must point at the public hostname so the QR join
+link on the TV is reachable from phones. Deploys wipe in-memory rooms — expected;
+the version tag in the UI corner tells you which build is live.
 
 ## Environment
 
@@ -318,5 +332,4 @@ at the public hostname so the QR join link on the TV is reachable from phones.
 | `CAST_RECEIVER_APP_ID` | *(empty)* | Google Cast custom receiver app id. Empty is fine for dev — register your own in the Cast SDK Developer Console; pinpoint's cannot be reused. |
 | `PUBLIC_BASE_URL` | `http://localhost:5173` | Base URL used to build the QR join link shown on the TV. |
 | `QUESTION_BANK_PATH` | `question-bank/bank.json` | Bank file, relative to the repo root. Falls back to the bundled sample. |
-| `CLIP_START_SECONDS` | `30` | Where each clip starts. |
-| `CLIP_DURATION_SECONDS` | `20` | How long each clip plays. |
+| `YOUTUBE_API_KEY` | *(empty)* | **Builder only, optional.** Legacy embeddable pre-check, and only when `--youtube-api-key` is passed explicitly. The Node server never reads it. |

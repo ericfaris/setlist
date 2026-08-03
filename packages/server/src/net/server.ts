@@ -1,12 +1,10 @@
 // Socket.IO wiring: clients send intents, the server validates via the engine
-// and broadcasts spectator-safe projections. Also schedules the clip timer.
+// and broadcasts spectator-safe projections. The server runs no game timers of
+// any kind — the only setTimeout here is the disconnect grace window.
 import type { Server, Socket } from 'socket.io';
-import { MAX_SUBSTITUTION_ATTEMPTS } from '@setlist/shared';
 import type { Ack, ClientToServer, ServerToClient } from '@setlist/shared';
 import { toPrivateState, toPublicRoom } from '../engine/project.js';
 import type { RoomManager, RoomRuntime } from './rooms.js';
-import { pickCandidates } from './songmatch.js';
-import type { YouTubeSearchClient } from './youtube.js';
 
 type IO = Server<ClientToServer, ServerToClient>;
 type Sock = Socket<ClientToServer, ServerToClient>;
@@ -28,18 +26,12 @@ const errAck = (error: string): Ack<never> => ({ ok: false, error });
 // come back unnoticed. Overridable so tests don't burn real seconds.
 const DEFAULT_DISCONNECT_GRACE_MS = 60_000;
 
-/** Small pad so the timer never fires a hair before the clip's own deadline. */
-const CLIP_TIMER_PAD_MS = 250;
-
 export function attachSocketServer(
   io: IO,
   rooms: RoomManager,
-  opts: { disconnectGraceMs?: number; youtube?: YouTubeSearchClient | null } = {},
+  opts: { disconnectGraceMs?: number } = {},
 ): void {
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
-  /** null = runtime song substitution is off; the server behaves as it did
-   *  before the feature existed. */
-  const youtube = opts.youtube ?? null;
   const data = (s: Sock) => s.data as SocketData;
   const standbyReceivers = new Set<string>(); // socketIds waiting for a room code
 
@@ -51,82 +43,10 @@ export function attachSocketServer(
       io.to(socketId).emit('you:state', toPrivateState(runtime.engine, playerId));
     }
     for (const socketId of runtime.receivers) {
-      // The one place isReceiver is set — this is what unlocks the videoId.
-      io.to(socketId).emit('you:state', toPrivateState(runtime.engine, null, { isReceiver: true }));
+      // Receivers get the same unprivileged private state as an unseated
+      // socket — the TV plays no media and needs no secret at all.
+      io.to(socketId).emit('you:state', toPrivateState(runtime.engine, null));
     }
-    reconcileTimer(runtime);
-  }
-
-  /**
-   * Re-arm the single per-room timer. Only PLAYING has an automatic action:
-   * the clip running out with nobody buzzing. Cleared on every phase change so
-   * a stale timer can never yank a question out from under a locked-in buzz.
-   */
-  function reconcileTimer(runtime: RoomRuntime): void {
-    if (runtime.timer) {
-      clearTimeout(runtime.timer);
-      runtime.timer = null;
-    }
-    const room = runtime.engine.room;
-    // `!retrying`: a clip that failed at second 19 must not expire and reveal
-    // the answer while we're mid-search. playSubstitute() re-stamps startedAt,
-    // so the substitute gets a full clip.
-    if (room.phase === 'PLAYING' && room.active && !room.active.retrying) {
-      const deadline = room.active.startedAt + room.active.durationSeconds * 1000;
-      const delay = Math.max(0, deadline - Date.now());
-      runtime.timer = setTimeout(() => {
-        runtime.timer = null;
-        const res = runtime.engine.clipExpired();
-        if (res.ok) broadcast(runtime);
-      }, delay + CLIP_TIMER_PAD_MS);
-    }
-  }
-
-  /**
-   * Runtime song substitution. The engine holds all state and enforces the
-   * 3-attempt cap; this function only performs the I/O and hands the result
-   * back. Mirrors reconcileTimer's shape: side effect out here, decision in the
-   * engine. Never throws — every failure path ends in exhaustRetries().
-   */
-  async function trySubstitute(runtime: RoomRuntime): Promise<void> {
-    const engine = runtime.engine;
-    const begun = engine.beginRetry();
-    if (!begun.ok) {
-      // Every alternate we're allowed to try has already failed to play —
-      // there's nothing left to usefully Skip past, so auto-reveal instead
-      // of leaving the room waiting on the host to notice. The other
-      // failure reasons (wrong phase, already retrying) are real races and
-      // must NOT force a reveal — only the cap being hit should.
-      if (begun.error === 'Out of substitution attempts.') {
-        engine.exhaustRetries();
-        broadcast(runtime);
-      }
-      return;
-    }
-    broadcast(runtime); // players see "finding another version…"
-
-    if (begun.needSearch) {
-      let results: Awaited<ReturnType<YouTubeSearchClient['searchVideos']>> = [];
-      try {
-        results = await youtube!.searchVideos(`${begun.title} ${begun.artist}`);
-      } catch (e) {
-        // The real client never rejects; a fake or a future one might.
-        console.warn(`[youtube] search threw: ${(e as Error).message}`);
-        results = [];
-      }
-      const picked = pickCandidates({ title: begun.title, artist: begun.artist }, results, {
-        excludeVideoIds: begun.excludeVideoIds,
-        limit: MAX_SUBSTITUTION_ATTEMPTS,
-      });
-      const applied = engine.resolveRetrySearch(begun.retryId, picked.map((c) => c.videoId));
-      // Stale: the question has moved on. Do nothing at all — no engine call,
-      // no broadcast — so the *new* question's state is never disturbed.
-      if (!applied.ok) return;
-    }
-
-    const played = engine.playSubstitute();
-    if (!played.ok) engine.exhaustRetries();
-    broadcast(runtime);
   }
 
   function runtimeForSocket(s: Sock): RoomRuntime | undefined {
@@ -236,19 +156,6 @@ export function attachSocketServer(
       broadcast(runtime);
     });
 
-    socket.on('receiver:playbackError', ({ message, playToken }) => {
-      const runtime = runtimeForSocket(socket);
-      if (!runtime || !data(socket).isReceiver) return;
-      const res = runtime.engine.reportPlaybackError(message, playToken);
-      if (!res.ok) return; // stale / duplicate onError — ignore silently
-      console.log(`[receiver] playback error in ${runtime.engine.room.code}: ${message}`);
-      // Broadcast first so the no-substitution path is byte-identical to the
-      // pre-feature behavior and the host sees something immediately; the
-      // async attempt broadcasts again when it changes state.
-      broadcast(runtime);
-      if (youtube) void trySubstitute(runtime);
-    });
-
     // ---- Lobby ----
     socket.on('game:settings', (patch) => {
       withPlayer((rt, hostId) => rt.engine.updateSettings(hostId, patch));
@@ -260,9 +167,9 @@ export function attachSocketServer(
       acked(ack, (rt, hostId) => rt.engine.transferHost(hostId, playerId));
     });
 
-    // ---- Board / play ----
-    socket.on('board:select', ({ categoryIndex, rowIndex }, ack) => {
-      acked(ack, (rt, hostId) => rt.engine.selectCell(hostId, categoryIndex, rowIndex));
+    // ---- Setlist / play ----
+    socket.on('setlist:start', ({ songId }, ack) => {
+      acked(ack, (rt, hostId) => rt.engine.startSong(hostId, songId));
     });
     socket.on('buzz:press', (_payload, ack) => {
       // The race. The engine's guard decides it; everyone else gets an error
@@ -273,11 +180,8 @@ export function attachSocketServer(
     socket.on('judge:answer', (verdict, ack) => {
       acked(ack, (rt, hostId) => rt.engine.judge(hostId, verdict));
     });
-    socket.on('question:skip', (_payload, ack) => {
-      acked(ack, (rt, hostId) => rt.engine.skipQuestion(hostId));
-    });
-    socket.on('playback:replay', (_payload, ack) => {
-      acked(ack, (rt, hostId) => rt.engine.replayClip(hostId));
+    socket.on('question:reveal', (_payload, ack) => {
+      acked(ack, (rt, hostId) => rt.engine.revealQuestion(hostId));
     });
     socket.on('question:next', (_payload, ack) => {
       acked(ack, (rt, hostId) => rt.engine.nextQuestion(hostId));

@@ -14,7 +14,7 @@ export interface GameState {
   priv: PrivateState | null;
   code: string | null;
   error: string | null;
-  /** client_now - server_now at the last projection, to reconcile clip countdowns */
+  /** client_now - server_now at the last projection, to reconcile clock skew */
   serverOffset: number;
 }
 
@@ -157,9 +157,10 @@ class GameStore {
     return res.ok;
   }
 
-  // ---- board / play ----
-  async selectCell(categoryIndex: number, rowIndex: number): Promise<boolean> {
-    const res = await this.emit('board:select', { categoryIndex, rowIndex });
+  // ---- setlist / play ----
+  /** Arm the buzzers on the song the host has just played out loud. */
+  async startSong(songId: string): Promise<boolean> {
+    const res = await this.emit('setlist:start', { songId });
     if (!res.ok) this.patch({ error: res.error });
     return res.ok;
   }
@@ -178,13 +179,8 @@ class GameStore {
     if (!res.ok) this.patch({ error: res.error });
     return res.ok;
   }
-  async skipQuestion(): Promise<boolean> {
-    const res = await this.emit('question:skip', {});
-    if (!res.ok) this.patch({ error: res.error });
-    return res.ok;
-  }
-  async replayClip(): Promise<boolean> {
-    const res = await this.emit('playback:replay', {});
+  async revealQuestion(): Promise<boolean> {
+    const res = await this.emit('question:reveal', {});
     if (!res.ok) this.patch({ error: res.error });
     return res.ok;
   }
@@ -205,9 +201,6 @@ class GameStore {
   // ---- receiver ----
   receiverStandby() {
     this.socket.emit('receiver:standby', {});
-  }
-  reportPlaybackError(message: string, playToken?: number) {
-    this.socket.emit('receiver:playbackError', { message, playToken });
   }
 
   async receiverSubscribe(code: string): Promise<boolean> {

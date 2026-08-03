@@ -4,23 +4,18 @@
 //   - PublicRoom:   broadcast to everyone in the room, including the TV.
 //   - PrivateState: sent only to the owning socket.
 //
-// Music trivia has three secrets:
+// Music trivia has two secrets:
 //   1. The ANSWER (title + artist) of the active question — host only, until
 //      the reveal. `PublicActiveQuestion.answer` stays null until revealed.
-//   2. The YouTube videoId of the active question — the TV receiver only. A
-//      player who saw it could simply look it up. It appears in exactly one
-//      place: PrivateState.receiverPlayback, populated only for receiver sockets.
-//   3. Unplayed cells' song data — nobody, ever. Public board cells carry only
-//      { categoryIndex, rowIndex, value, questionId, used }.
+//   2. The SETLIST's song data (titles, artists, videoIds) — the host's own
+//      socket only. The host has to pick and play the songs, so they
+//      legitimately know them; nobody else may. It appears in exactly one
+//      place: PrivateState.setlist, populated only for the host.
+//
+// There is no receiver secret any more: our app never plays media, so the TV
+// receiver is now the LEAST privileged surface in the system.
 // ============================================================================
-import type {
-  BoardCell,
-  BoardState,
-  JudgeVerdict,
-  RoomPhase,
-  RoomSettings,
-  PauseState,
-} from './types.js';
+import type { JudgeVerdict, RoomPhase, RoomSettings, PauseState } from './types.js';
 
 // ---------- Public (everyone, incl. TV) ----------
 export interface PublicPlayer {
@@ -41,25 +36,17 @@ export interface PublicAnswer {
 }
 
 export interface PublicActiveQuestion {
-  cell: BoardCell;
-  categoryTitle: string;
-  value: number;
+  songId: string; // opaque; carries no song data
+  sectionTitle: string; // the theme label — public, like the old category header
+  value: number; // always SONG_POINT_VALUE
   startedAt: number;
-  durationSeconds: number;
   lockedPlayerId: string | null;
   lockedOutPlayerIds: string[];
   verdict: JudgeVerdict | null;
   awarded: number;
   revealed: boolean;
-  answer: PublicAnswer | null; // null until revealed === true
-  playbackError: string | null;
-  timedOut: boolean;
-  /** The server is trying an alternate upload of this song. Buzzers are cold. */
-  retrying: boolean;
-  // NOTE: videoId deliberately absent — see PrivateState.receiverPlayback.
-  // NOTE: ActiveQuestion's substituteVideoId / retryCandidates / retryId /
-  // retryAttempts are deliberately absent too — candidate video ids are the
-  // same secret as the original videoId and stay server-side.
+  answer: PublicAnswer | null; // null until revealed === true — the one secret left here
+  // NOTE: no videoId, no title/artist pre-reveal. Built field by field, never `...a`.
 }
 
 export interface PublicRoom {
@@ -67,24 +54,29 @@ export interface PublicRoom {
   phase: RoomPhase;
   settings: RoomSettings;
   players: PublicPlayer[];
-  /** Cells carry no song data — only position, value and used. */
-  board: BoardState | null;
   active: PublicActiveQuestion | null;
+  /** Progress only — counts, never song data. */
+  songsTotal: number;
+  songsRemaining: number;
   winnerPlayerIds: string[];
   castConnected: boolean;
   pause: PauseState;
-  /** server time when projected, so clients can reconcile clip countdowns. */
+  /** server time when projected, so clients can reconcile clock skew. */
   serverNow: number;
 }
 
-/** What the TV receiver alone needs to actually play audio. */
-export interface ReceiverPlayback {
+/** HOST-ONLY. The host legitimately knows every song — they have to pick and
+ *  play them. This must never be projected onto a non-host socket. */
+export interface HostSetlistSong {
+  id: string;
+  title: string;
+  artist: string;
   videoId: string;
-  startSeconds: number;
-  durationSeconds: number;
-  /** Bumped every time playback should (re)start — the receiver watches this. */
-  playToken: number;
-  paused: boolean;
+  used: boolean;
+}
+export interface HostSetlistSection {
+  title: string;
+  songs: HostSetlistSong[];
 }
 
 // ---------- Private (only the owning socket) ----------
@@ -95,8 +87,9 @@ export interface PrivateState {
   score: number;
   /** True if this socket may buzz right now (armed, not locked out, not the locker). */
   canBuzz: boolean;
-  /** Host-only: the answer to judge against, before the reveal. */
+  /** Host-only. Now populated from the moment the round is ARMED (the host picked
+   *  the song, so hiding it is pointless) — but still ONLY for the host socket. */
   hostAnswer: PublicAnswer | null;
-  /** Receiver-only: what to play. Null for player sockets, always. */
-  receiverPlayback: ReceiverPlayback | null;
+  /** Host-only, and only while phase === 'SETLIST'. Null for everyone else, always. */
+  setlist: HostSetlistSection[] | null;
 }

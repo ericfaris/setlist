@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   addPlayers,
   checkInvariants,
+  firstUnusedSongId,
   makeEngine,
   resetInvariantMemory,
   startedGame,
@@ -22,10 +23,9 @@ describe('host role', () => {
     const { engine, seats, bank } = startedGame(401, 3);
     const notHost = seats[1]!.id;
     const calls: Array<[string, () => { ok: boolean; error?: string }]> = [
-      ['selectCell', () => engine.selectCell(notHost, 0, 0)],
+      ['startSong', () => engine.startSong(notHost, firstUnusedSongId(engine))],
       ['transferHost', () => engine.transferHost(notHost, seats[2]!.id)],
-      ['skipQuestion', () => engine.skipQuestion(notHost)],
-      ['replayClip', () => engine.replayClip(notHost)],
+      ['revealQuestion', () => engine.revealQuestion(notHost)],
       ['nextQuestion', () => engine.nextQuestion(notHost)],
       ['forceEnd', () => engine.forceEnd(notHost)],
       ['rematch', () => engine.rematch(notHost)],
@@ -38,7 +38,7 @@ describe('host role', () => {
       expect(res.error, name).toMatch(/Only the host/);
     }
     // judge is host-gated too, but needs a lock to reach the check
-    engine.selectCell(seats[0]!.id, 0, 0);
+    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
     engine.buzz(seats[1]!.id);
     const judged = engine.judge(notHost, { titleCorrect: true, artistCorrect: true });
     expect(judged).toEqual({ ok: false, error: 'Only the host can judge an answer.' });
@@ -91,35 +91,41 @@ describe('host role', () => {
 
   it('keeps the crown when nobody is left to take it', () => {
     const { engine } = makeEngine(405);
-    const seats = addPlayers(engine, 1);
+    const seats = addPlayers(engine, 2);
+    engine.disconnect(seats[1]!.id);
     engine.disconnect(seats[0]!.id);
     expect(engine.room.players[0]!.isHost).toBe(true);
   });
 
   it('pauses the game when the host drops mid-question and nobody can take over', () => {
-    const { engine, seats } = startedGame(406, 1);
-    engine.selectCell(seats[0]!.id, 0, 0);
+    const { engine, seats } = startedGame(406, 2);
+    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    // The guest leaving empties the buzz pool (the host never buzzes), so the
+    // round auto-reveals first; then the host drops with nobody to inherit.
+    engine.disconnect(seats[1]!.id);
+    expect(engine.room.phase).toBe('REVEAL');
     engine.disconnect(seats[0]!.id);
     expect(engine.room.phase).toBe('PAUSED');
     expect(engine.room.pause.reason).toBe('PLAYER_DISCONNECT');
+    expect(engine.room.phaseBeforePause).toBe('REVEAL');
     // reconnecting the host resumes it
     const back = engine.join({ displayName: 'P0', reconnectToken: seats[0]!.token });
     expect(back.ok).toBe(true);
-    expect(engine.room.phase).toBe('PLAYING');
+    expect(engine.room.phase).toBe('REVEAL');
   });
 
   it('does not pause when the host drops but a successor is connected', () => {
     const { engine, seats } = startedGame(407, 3);
-    engine.selectCell(seats[0]!.id, 0, 0);
+    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
     engine.disconnect(seats[0]!.id);
-    expect(engine.room.phase).toBe('PLAYING');
+    expect(engine.room.phase).toBe('ARMED');
     expect(engine.room.players.find((p) => p.isHost)!.connected).toBe(true);
     checkInvariants(engine);
   });
 
   it('a reconnecting player keeps their seat, score and name', () => {
     const { engine, seats } = startedGame(408, 2);
-    engine.selectCell(seats[0]!.id, 0, 0);
+    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
     engine.buzz(seats[1]!.id);
     engine.judge(seats[0]!.id, { titleCorrect: true, artistCorrect: true });
     engine.disconnect(seats[1]!.id);
@@ -134,7 +140,7 @@ describe('host role', () => {
 
   it('rejects a duplicate display name', () => {
     const { engine } = makeEngine(409);
-    addPlayers(engine, 1);
+    addPlayers(engine, 2);
     expect(engine.join({ displayName: 'p0' })).toEqual({
       ok: false,
       error: 'That name is taken in this room.',

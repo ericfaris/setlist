@@ -6,23 +6,9 @@
     <title>Setlist — TV</title>
     <link rel="icon" href="/favicon.ico" />
     <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-    <script src="https://www.youtube.com/iframe_api"></script>
   </head>
   <body>
     <div id="root"></div>
-    <!--
-      The YouTube player lives OUTSIDE React's render tree on purpose. YT.Player
-      replaces this div with its own iframe; if React ever re-rendered around it
-      the player would be re-created, restarting audio and leaking iframes.
-      React only commands the instance via refs (see receiver/YouTubePlayer.tsx).
-      It is kept in the layout (not display:none) so the browser doesn't suspend
-      audio — the .ytshield overlay in styles.css hides the video, whose chrome
-      would otherwise print the song title, i.e. the answer, on the TV.
-    -->
-    <div id="yt-stage" class="ytstage">
-      <div id="yt-player"></div>
-      <div class="ytshield"></div>
-    </div>
     <!--
       Module script is deferred (runs after parsing completes).
       The inline scripts below are regular scripts — they run immediately when

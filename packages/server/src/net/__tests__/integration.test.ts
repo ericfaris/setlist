@@ -2,7 +2,7 @@
 // WebSockets, validating the wire protocol, the projections each surface
 // receives, and the ack flow.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Client, makeRoom, startTestServer, tick, type TestServer } from './harness.js';
+import { Client, armRound, firstSongId, makeRoom, startTestServer, tick, type TestServer } from './harness.js';
 
 let server: TestServer;
 
@@ -14,7 +14,7 @@ afterEach(async () => {
 });
 
 describe('a full question over WebSockets', () => {
-  it('runs lobby -> board -> clip -> buzz -> judge -> reveal on all three surfaces', async () => {
+  it('runs lobby -> setlist -> armed -> buzz -> judge -> reveal on all three surfaces', async () => {
     const { receiver, players, closeAll } = await makeRoom(server.port, 2);
     const [host, guest] = players as [Client, Client];
 
@@ -26,35 +26,71 @@ describe('a full question over WebSockets', () => {
     // start
     expect(await host.emit('game:start', {})).toEqual({ ok: true, data: {} });
     await tick();
-    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('BOARD');
-    expect(receiver.pub?.board?.categories.length).toBeGreaterThan(0);
+    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('SETLIST');
+    expect(host.pub?.songsTotal).toBeGreaterThan(0);
+    expect(host.pub?.songsRemaining).toBe(host.pub?.songsTotal);
 
-    // a non-host cannot pick
-    const stolen = await guest.emit('board:select', { categoryIndex: 0, rowIndex: 0 });
-    expect(stolen).toEqual({ ok: false, error: 'Only the host can pick a square.' });
+    // the HOST and only the host has the setlist
+    expect(host.priv?.setlist?.length).toBeGreaterThan(0);
+    expect(host.priv!.setlist![0]!.songs.length).toBeGreaterThan(0);
+    expect(guest.priv?.setlist).toBeNull();
+    expect(receiver.priv?.setlist).toBeNull();
 
-    // pick a cell
-    expect(await host.emit('board:select', { categoryIndex: 0, rowIndex: 2 })).toEqual({
-      ok: true,
-      data: {},
+    const song = host.priv!.setlist![0]!.songs[0]!;
+    // ...and nothing about it reaches any other surface
+    for (const json of [
+      JSON.stringify(guest.pub),
+      JSON.stringify(guest.priv),
+      JSON.stringify(receiver.pub),
+      JSON.stringify(receiver.priv),
+      JSON.stringify(host.pub),
+    ]) {
+      expect(json).not.toContain(song.title);
+      expect(json).not.toContain(song.artist);
+      expect(json).not.toContain(song.videoId);
+    }
+
+    // buzzing is not live merely because the host is browsing
+    expect(guest.priv?.canBuzz).toBe(false);
+
+    // a non-host cannot arm a song
+    expect(await guest.emit('setlist:start', { songId: song.id })).toEqual({
+      ok: false,
+      error: 'Only the host can start a song.',
     });
+
+    // arm it
+    expect(await host.emit('setlist:start', { songId: song.id })).toEqual({ ok: true, data: {} });
     await tick();
-    expect(host.pub?.phase).toBe('PLAYING');
-    expect(host.pub?.active?.value).toBe(300);
+    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('ARMED');
+    expect(host.pub?.active?.value).toBe(100);
+    expect(host.pub?.active?.songId).toBe(song.id);
+    expect(host.pub?.songsRemaining).toBe(host.pub!.songsTotal - 1);
 
-    // only the receiver gets playback data
-    expect(receiver.priv?.receiverPlayback).not.toBeNull();
-    expect(receiver.priv?.receiverPlayback?.videoId).toMatch(/^[\w-]{11}$/);
-    expect(receiver.priv?.receiverPlayback?.paused).toBe(false);
-    expect(host.priv?.receiverPlayback).toBeNull();
-    expect(guest.priv?.receiverPlayback).toBeNull();
-
-    // nobody gets the answer yet — not even the host — while the clip is
-    // still playing and nobody has locked in. Sending it earlier than a lock
-    // would spoil the clip for a host who also plays.
-    expect(host.priv?.hostAnswer).toBeNull();
+    // the host knows the answer IMMEDIATELY now (they picked it) — nobody else
+    // does, and the setlist itself is gone from every surface while armed.
+    expect(host.priv?.hostAnswer?.title).toBe(song.title);
+    expect(host.priv?.setlist).toBeNull();
     expect(guest.priv?.hostAnswer).toBeNull();
+    expect(receiver.priv?.hostAnswer).toBeNull();
     expect(host.pub?.active?.answer).toBeNull();
+    for (const json of [
+      JSON.stringify(guest.pub),
+      JSON.stringify(guest.priv),
+      JSON.stringify(receiver.pub),
+      JSON.stringify(receiver.priv),
+    ]) {
+      expect(json).not.toContain(song.title);
+      expect(json).not.toContain(song.artist);
+      expect(json).not.toContain(song.videoId);
+    }
+
+    // the host cannot buzz on their own round
+    expect(host.priv?.canBuzz).toBe(false);
+    expect(await host.emit('buzz:press', {})).toEqual({
+      ok: false,
+      error: "The host doesn't buzz on this one.",
+    });
 
     // buzz
     expect(guest.priv?.canBuzz).toBe(true);
@@ -64,15 +100,7 @@ describe('a full question over WebSockets', () => {
       expect(c.pub?.phase).toBe('LOCKED');
       expect(c.pub?.active?.lockedPlayerId).toBe(guest.playerId);
     }
-    // the music stops on the TV
-    expect(receiver.priv?.receiverPlayback?.paused).toBe(true);
     expect(guest.priv?.canBuzz).toBe(false);
-
-    // only once someone is locked in does the host get the answer — still
-    // never the guest
-    expect(host.priv?.hostAnswer?.title).toBeTruthy();
-    expect(guest.priv?.hostAnswer).toBeNull();
-    expect(JSON.stringify(guest.pub)).not.toContain(host.priv!.hostAnswer!.title);
 
     // judge
     expect(await host.emit('judge:answer', { titleCorrect: true, artistCorrect: false })).toEqual({
@@ -83,33 +111,38 @@ describe('a full question over WebSockets', () => {
     for (const c of [host, guest, receiver]) {
       expect(c.pub?.phase).toBe('REVEAL');
       expect(c.pub?.active?.revealed).toBe(true);
-      expect(c.pub?.active?.answer?.title).toBe(host.priv!.hostAnswer!.title);
-      expect(c.pub?.players.find((p) => p.id === guest.playerId)?.score).toBe(150);
+      expect(c.pub?.active?.answer?.title).toBe(song.title);
+      expect(c.pub?.players.find((p) => p.id === guest.playerId)?.score).toBe(50);
     }
-    expect(guest.priv?.score).toBe(150);
+    expect(guest.priv?.score).toBe(50);
 
     // advance
     expect(await host.emit('question:next', {})).toEqual({ ok: true, data: {} });
     await tick();
-    expect(host.pub?.phase).toBe('BOARD');
-    expect(host.pub?.board?.cells.find((c) => c.categoryIndex === 0 && c.rowIndex === 2)?.used).toBe(
+    expect(host.pub?.phase).toBe('SETLIST');
+    expect(host.priv!.setlist!.flatMap((s) => s.songs).find((s) => s.id === song.id)?.used).toBe(
       true,
     );
 
     closeAll();
   }, 20000);
 
-  it('never puts a videoId in the public projection', async () => {
+  it('never puts a videoId in any surface but the host s own private state', async () => {
     const { receiver, players, closeAll } = await makeRoom(server.port, 2);
     const [host, guest] = players as [Client, Client];
     await host.emit('game:start', {});
-    await host.emit('board:select', { categoryIndex: 1, rowIndex: 0 });
     await tick();
-    const videoId = receiver.priv!.receiverPlayback!.videoId;
-    expect(JSON.stringify(host.pub)).not.toContain(videoId);
-    expect(JSON.stringify(guest.pub)).not.toContain(videoId);
-    expect(JSON.stringify(receiver.pub)).not.toContain(videoId);
-    expect(JSON.stringify(guest.priv)).not.toContain(videoId);
+    const videoIds = host.priv!.setlist!.flatMap((sec) => sec.songs).map((s) => s.videoId);
+    expect(videoIds.length).toBeGreaterThan(0);
+    await armRound(host);
+
+    for (const videoId of videoIds) {
+      expect(JSON.stringify(host.pub)).not.toContain(videoId);
+      expect(JSON.stringify(guest.pub)).not.toContain(videoId);
+      expect(JSON.stringify(guest.priv)).not.toContain(videoId);
+      expect(JSON.stringify(receiver.pub)).not.toContain(videoId);
+      expect(JSON.stringify(receiver.priv)).not.toContain(videoId);
+    }
     closeAll();
   }, 20000);
 
@@ -127,31 +160,19 @@ describe('a full question over WebSockets', () => {
     host.close();
   }, 20000);
 
-  it('expires the clip on the server when nobody buzzes', async () => {
-    await server.close();
-    server = await startTestServer({ clipDurationSeconds: 0 });
+  it('lets the host reveal with nobody buzzed — there is no timer', async () => {
     const { players, closeAll } = await makeRoom(server.port, 2);
     const [host] = players as [Client];
-    await host.emit('game:start', {});
-    await host.emit('board:select', { categoryIndex: 0, rowIndex: 0 });
-    expect(host.pub?.phase).toBe('PLAYING');
-    await new Promise((r) => setTimeout(r, 500));
+    await armRound(host);
+    expect(host.pub?.phase).toBe('ARMED');
+    // nothing happens on its own
+    await new Promise((r) => setTimeout(r, 300));
+    expect(host.pub?.phase).toBe('ARMED');
+
+    expect(await host.emit('question:reveal', {})).toEqual({ ok: true, data: {} });
+    await tick();
     expect(host.pub?.phase).toBe('REVEAL');
     expect(host.pub?.active?.answer).not.toBeNull();
-    closeAll();
-  }, 20000);
-
-  it('surfaces a receiver playback error to the players', async () => {
-    const { receiver, players, closeAll } = await makeRoom(server.port, 2);
-    const [host] = players as [Client];
-    await host.emit('game:start', {});
-    await host.emit('board:select', { categoryIndex: 0, rowIndex: 0 });
-    receiver.socket.emit('receiver:playbackError', { message: 'Embedding disabled (150)' });
-    await tick();
-    expect(host.pub?.active?.playbackError).toBe('Embedding disabled (150)');
-    expect(await host.emit('question:skip', {})).toEqual({ ok: true, data: {} });
-    await tick();
-    expect(host.pub?.phase).toBe('REVEAL');
     closeAll();
   }, 20000);
 
@@ -177,11 +198,12 @@ describe('a full question over WebSockets', () => {
     const { players, closeAll } = await makeRoom(server.port, 2);
     const [host, guest] = players as [Client, Client];
     await host.emit('game:start', {});
-    await host.emit('board:select', { categoryIndex: 0, rowIndex: 4 });
+    await tick();
+    await host.emit('setlist:start', { songId: firstSongId(host) });
     await guest.emit('buzz:press', {});
     await host.emit('judge:answer', { titleCorrect: true, artistCorrect: true });
     await tick();
-    expect(guest.priv?.score).toBe(500);
+    expect(guest.priv?.score).toBe(100);
 
     const token = guest.token;
     guest.close();
@@ -196,7 +218,7 @@ describe('a full question over WebSockets', () => {
     });
     expect(rr.ok).toBe(true);
     await tick();
-    expect(rejoin.priv?.score).toBe(500);
+    expect(rejoin.priv?.score).toBe(100);
     expect(rejoin.pub?.players.find((p) => p.id === guest.playerId)?.connected).toBe(true);
     rejoin.close();
     closeAll();
