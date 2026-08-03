@@ -13,6 +13,7 @@ import {
 import { sampleQuestionBank } from '../../questions/bank.js';
 import { RoomManager } from '../rooms.js';
 import { attachSocketServer } from '../server.js';
+import type { YouTubeSearchClient, YouTubeSearchResult } from '../youtube.js';
 
 /** Real (short) grace period so tests exercise it without burning 60s each. */
 export const TEST_DISCONNECT_GRACE_MS = 60;
@@ -23,9 +24,49 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
+/**
+ * Fake YouTube search client. Records every query it is asked; returns canned
+ * results. No test ever touches the network or needs a real YOUTUBE_API_KEY.
+ * `gate` (when set) defers resolution so a test can inspect the mid-search
+ * "retrying" window.
+ */
+export interface FakeYouTube extends YouTubeSearchClient {
+  queries: string[];
+  results: YouTubeSearchResult[];
+  /** Set to a promise to hold every search open until it resolves. */
+  gate: Promise<void> | null;
+  /** Set to make searchVideos reject (the real client never does). */
+  throws: boolean;
+}
+
+export function fakeYouTube(results: YouTubeSearchResult[] = []): FakeYouTube {
+  const fake: FakeYouTube = {
+    queries: [],
+    results,
+    gate: null,
+    throws: false,
+    async searchVideos(query: string): Promise<YouTubeSearchResult[]> {
+      fake.queries.push(query);
+      if (fake.gate) await fake.gate;
+      if (fake.throws) throw new Error('search exploded');
+      return fake.results;
+    },
+  };
+  return fake;
+}
+
+/** A manually-resolvable gate for deferring a fake search. */
+export function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
 export async function startTestServer(opts: {
   bank?: QuestionBank;
   clipDurationSeconds?: number;
+  /** Default null = substitution off, i.e. exactly the pre-feature behavior. */
+  youtube?: YouTubeSearchClient | null;
 } = {}): Promise<TestServer> {
   const httpServer: HttpServer = createServer();
   const io = new Server(httpServer, { path: SOCKET_PATH });
@@ -33,7 +74,10 @@ export async function startTestServer(opts: {
     // Long by default so the clip timer never fires mid-test unless asked.
     clipDurationSeconds: opts.clipDurationSeconds ?? 3600,
   });
-  attachSocketServer(io as never, rooms, { disconnectGraceMs: TEST_DISCONNECT_GRACE_MS });
+  attachSocketServer(io as never, rooms, {
+    disconnectGraceMs: TEST_DISCONNECT_GRACE_MS,
+    youtube: opts.youtube ?? null,
+  });
   await new Promise<void>((resolve) => httpServer.listen(0, resolve));
   const port = (httpServer.address() as { port: number }).port;
   return {

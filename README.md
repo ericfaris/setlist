@@ -223,8 +223,19 @@ anywhere, on any site (not a bug, a per-video YouTube setting). Set
 `YOUTUBE_API_KEY` (a plain Google/YouTube Data API v3 key, separate from the
 `ytmusicapi` OAuth/browser auth above) and the builder checks every pooled
 song's real embeddable status before it ever reaches the board, dropping any
-that would fail. Without the key this step is skipped and a bad video instead
-surfaces as an in-game "Embedding disabled" error the host can Skip past.
+that would fail. `YOUTUBE_API_KEY` is read by both the builder and the Node
+server (see below) — it is not builder-only. Without the key this step is
+skipped and a bad video instead surfaces as an in-game "Embedding disabled"
+error the host can Skip past.
+
+**Runtime song substitution**: the `status.embeddable` flag cannot see
+per-domain embed allowlists, so some videos still fail live with error 101/150.
+When that happens the Node server (which now also reads `YOUTUBE_API_KEY`)
+searches the YouTube Data API v3 for an alternate upload of the same song,
+verifies the title/artist plausibly match, and plays it — up to 2 attempts, with
+a "finding another version…" indicator and buzzers disabled throughout. If both
+fail, or the key is unset, it falls back to the host's manual Skip exactly as
+before. Costs 100 quota units per failed song against the 10,000/day default.
 
 ### Schema
 

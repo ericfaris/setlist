@@ -134,6 +134,17 @@ export function checkInvariants(engine: GameEngine, bank?: QuestionBank): void {
         expect(serialized).not.toContain(q.videoId);
       }
     }
+  }
+  // A substitute video id is exactly as much of a spoiler as the original —
+  // it must never reach a player socket either. Checked unconditionally (not
+  // gated on `bank`) because substitutes come from the search, not the bank.
+  if (room.active?.substituteVideoId) {
+    expect(serialized).not.toContain(room.active.substituteVideoId);
+  }
+  for (const candidate of room.active?.retryCandidates ?? []) {
+    expect(serialized).not.toContain(candidate);
+  }
+  if (theBank) {
     // pre-reveal, the title/artist must not appear in the public projection either
     if (room.active && !room.active.revealed) {
       expect(serialized).not.toContain(room.active.question.title);

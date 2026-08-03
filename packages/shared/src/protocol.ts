@@ -34,8 +34,14 @@ export interface ClientToServer {
   /** TV receiver: no room code yet, wait for the host to cast. */
   'receiver:standby': (_: {}) => void;
 
-  /** TV receiver: the YouTube player errored or stalled on the active clip. */
-  'receiver:playbackError': (payload: { message: string }) => void;
+  /**
+   * TV receiver: the YouTube player errored or stalled on the active clip.
+   * `playToken` is the token the failing load was for — optional so older
+   * clients keep working. The server ignores a report older than the active
+   * question's current token, which kills a late onError from a video that has
+   * already been superseded by a substitute.
+   */
+  'receiver:playbackError': (payload: { message: string; playToken?: number }) => void;
 
   /** Host starts the game: LOBBY -> BOARD (lays out the board). */
   'game:start': (_: {}, ack: (res: Ack<{}>) => void) => void;

@@ -54,7 +54,12 @@ export interface PublicActiveQuestion {
   answer: PublicAnswer | null; // null until revealed === true
   playbackError: string | null;
   timedOut: boolean;
+  /** The server is trying an alternate upload of this song. Buzzers are cold. */
+  retrying: boolean;
   // NOTE: videoId deliberately absent — see PrivateState.receiverPlayback.
+  // NOTE: ActiveQuestion's substituteVideoId / retryCandidates / retryId /
+  // retryAttempts are deliberately absent too — candidate video ids are the
+  // same secret as the original videoId and stay server-side.
 }
 
 export interface PublicRoom {

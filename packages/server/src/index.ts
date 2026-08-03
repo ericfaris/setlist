@@ -14,7 +14,8 @@ import {
 import { loadQuestionBank } from './questions/bank.js';
 import { RoomManager } from './net/rooms.js';
 import { attachSocketServer } from './net/server.js';
-import { loadRootEnv, readAppVersion } from './env.js';
+import { createYouTubeSearchClient } from './net/youtube.js';
+import { loadRootEnv, readAppVersion, youtubeApiKey } from './env.js';
 
 loadRootEnv();
 
@@ -102,7 +103,15 @@ const io = new Server(httpServer, {
   pingTimeout: 60_000,
 });
 
-attachSocketServer(io, rooms);
+// Runtime song substitution. loadRootEnv() ran at the top of this file, so
+// process.env is populated by now. No key = feature entirely inert.
+const YT_KEY = youtubeApiKey();
+const youtube = YT_KEY ? createYouTubeSearchClient({ apiKey: YT_KEY }) : null;
+console.log(
+  `[startup] song substitution: ${youtube ? 'enabled' : 'disabled (no YOUTUBE_API_KEY)'}`,
+);
+
+attachSocketServer(io, rooms, { youtube });
 
 httpServer.listen(PORT, () => {
   console.log(`[startup] Setlist v${APP_VERSION} on :${PORT} (socket ${SOCKET_PATH})`);

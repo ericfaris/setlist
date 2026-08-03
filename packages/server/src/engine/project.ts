@@ -42,7 +42,11 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       answer,
       playbackError: a.playbackError,
       timedOut: a.timedOut,
+      retrying: a.retrying,
       // videoId intentionally omitted — see PrivateState.receiverPlayback.
+      // So are substituteVideoId / retryCandidates: a candidate id is exactly
+      // as much of a spoiler as the original. This object is built field by
+      // field (never `...a`) precisely so a new server-only field can't leak.
     };
   }
 
@@ -89,10 +93,13 @@ export function toPrivateState(
 
   // Receiver sockets have no seat but do need the one thing nobody else may
   // see: which video to play, from where.
+  // When runtime song substitution has swapped in an alternate upload, that
+  // substitute id travels through this same receiver-only channel — no new
+  // event, no new surface, so the videoId secret keeps exactly one home.
   let receiverPlayback: ReceiverPlayback | null = null;
   if (opts.isReceiver && a) {
     receiverPlayback = {
-      videoId: a.question.videoId,
+      videoId: a.substituteVideoId ?? a.question.videoId,
       startSeconds: a.startSeconds,
       durationSeconds: a.durationSeconds,
       playToken: a.playToken,

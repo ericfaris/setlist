@@ -216,9 +216,11 @@ function PlayingTV({ pub }: { pub: PublicRoom }) {
             <div className="sub">Name that song… and the artist!</div>
           </>
         )}
-        {a.playbackError && <div className="sub">⚠️ {a.playbackError}</div>}
+        {a.retrying && <div className="sub">🔎 Finding another version…</div>}
+        {!a.retrying && a.playbackError && <div className="sub">⚠️ {a.playbackError}</div>}
       </div>
-      <ClipBar startedAt={a.startedAt} durationSeconds={a.durationSeconds} />
+      {/* No clip is actually playing mid-substitution — don't count one down. */}
+      {!a.retrying && <ClipBar startedAt={a.startedAt} durationSeconds={a.durationSeconds} />}
       <Scores pub={pub} />
     </div>
   );

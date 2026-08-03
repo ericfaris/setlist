@@ -70,6 +70,15 @@ export interface ActiveQuestion {
    * set for a host skip, which reveals via the same phase transition. Drives
    * the "times up" sound on the receiver. */
   timedOut: boolean;
+  /** True while the server is searching for / loading a substitute video.
+   *  Buzzing is disabled and the clip timer is suspended while true. */
+  retrying: boolean;
+  /** Server-only from here down — deliberately NOT in PublicActiveQuestion. */
+  retryAttempts: number;
+  retryCandidates: string[];
+  substituteVideoId: string | null;
+  retryId: string | null;
+  lastPlaybackErrorMessage: string | null;
 }
 
 export interface RoomSettings {
@@ -107,3 +116,5 @@ export const MIN_PLAYERS = 1;
 export const MAX_PLAYERS = 10;
 export const DEFAULT_CLIP_START_SECONDS = 30;
 export const DEFAULT_CLIP_DURATION_SECONDS = 20;
+/** Alternate uploads tried automatically before falling back to manual Skip. */
+export const MAX_SUBSTITUTION_ATTEMPTS = 2;

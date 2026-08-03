@@ -55,6 +55,7 @@ export function makeActive(
     answer: null,
     playbackError: null,
     timedOut: false,
+    retrying: false,
     ...overrides,
   };
 }

@@ -18,6 +18,14 @@ export function loadRootEnv(): void {
   loadEnv({ path: rootEnvPath() });
 }
 
+/** YouTube Data API v3 key. Read by the Node server for runtime song
+ *  substitution (net/youtube.ts) as well as by the offline Python builder.
+ *  Empty/absent simply disables substitution — playback errors fall straight
+ *  through to the host's manual Skip, exactly as before. */
+export function youtubeApiKey(): string {
+  return (process.env.YOUTUBE_API_KEY ?? '').trim();
+}
+
 export function rootPackageJsonPath(): string {
   const dir = dirname(fileURLToPath(import.meta.url));
   return join(dir, '../../../package.json');

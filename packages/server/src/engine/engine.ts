@@ -17,6 +17,7 @@ import {
   DEFAULT_CLIP_DURATION_SECONDS,
   DEFAULT_CLIP_START_SECONDS,
   MAX_PLAYERS,
+  MAX_SUBSTITUTION_ATTEMPTS,
   MIN_PLAYERS,
   POINT_VALUES,
   type ActiveQuestion,
@@ -33,6 +34,19 @@ import {
 import { makeRng, type Rng } from './rng.js';
 
 export type EngineResult = { ok: true } | { ok: false; error: string };
+
+/** What the net layer needs to actually run a substitution search. */
+export type BeginRetryResult =
+  | {
+      ok: true;
+      retryId: string;
+      title: string;
+      artist: string;
+      excludeVideoIds: string[];
+      needSearch: boolean;
+    }
+  | { ok: false; error: string };
+
 const ok: EngineResult = { ok: true };
 const err = (error: string): EngineResult => ({ ok: false, error });
 
@@ -65,6 +79,13 @@ let playerSeq = 0;
 function makePlayerId(): string {
   playerSeq += 1;
   return `p_${playerSeq}_${Math.random().toString(36).slice(2, 8)}`;
+}
+let retryIdSeq = 0;
+/** Opaque per-search token. Its only job is to let a late search response
+ *  recognise that the question it was searching for has moved on. */
+function makeRetryId(): string {
+  retryIdSeq += 1;
+  return `r${retryIdSeq}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 const DEFAULT_SETTINGS: RoomSettings = {
@@ -304,6 +325,15 @@ export class GameEngine {
       playToken: prevToken + 1,
       playbackError: null,
       timedOut: false,
+      // A brand-new active question resets the whole substitution state — this
+      // is the only place retryAttempts goes back to 0, which is what makes the
+      // 2-attempt cap per-question.
+      retrying: false,
+      retryAttempts: 0,
+      retryCandidates: [],
+      substituteVideoId: null,
+      retryId: null,
+      lastPlaybackErrorMessage: null,
     };
     this.room.phase = 'PLAYING';
     return ok;
@@ -337,6 +367,8 @@ export class GameEngine {
     // "Already locked in." rather than a generic phase error.
     if (active?.lockedPlayerId != null) return err('Already locked in.');
     if (this.room.phase !== 'PLAYING' || !active) return err('Buzzers are not armed.');
+    // Nobody buzzes in on a song that isn't actually playing yet.
+    if (active.retrying) return err('Finding another version…');
     const p = this.player(playerId);
     if (!p) return err('No such player.');
     if (!p.connected) return err('You are disconnected.');
@@ -411,6 +443,9 @@ export class GameEngine {
     active.lockedPlayerId = null;
     active.lockedAt = null;
     active.revealed = true;
+    // A REVEAL screen must never render "finding another version…". An
+    // in-flight search is neutralized by playSubstitute()'s phase guard.
+    active.retrying = false;
     this.room.phase = 'REVEAL';
     return ok;
   }
@@ -421,6 +456,8 @@ export class GameEngine {
     const active = this.room.active;
     if (!active) return err('No clip is playing.');
     active.revealed = true;
+    active.retrying = false; // see skipQuestion
+
     active.timedOut = true;
     this.room.phase = 'REVEAL';
     return ok;
@@ -436,11 +473,117 @@ export class GameEngine {
     return ok;
   }
 
-  /** The receiver's YouTube player errored or stalled. Surfaces to the host as "Skip". */
-  reportPlaybackError(message: string): EngineResult {
+  // ------------------------------------------------- runtime substitution
+  // A video can be embeddable everywhere except our domain (YouTube exposes no
+  // API for per-domain embed allowlists), so the only way to find out is to
+  // fail live. When that happens the net layer searches for an alternate upload
+  // of the same song and we play that instead — up to MAX_SUBSTITUTION_ATTEMPTS
+  // times, after which we land in exactly the pre-feature state: playbackError
+  // set, host taps Skip.
+  //
+  // Everything here is pure: the engine mints a retry, accepts its outcome and
+  // represents the retrying state. The fetch lives in net/server.ts.
+
+  /**
+   * The receiver's YouTube player errored or stalled. Surfaces to the host as
+   * "Skip" unless the net layer decides to retry (see beginRetry).
+   */
+  reportPlaybackError(message: string, playToken?: number): EngineResult {
     const active = this.room.active;
     if (!active) return err('No question in play.');
+    // A late onError from a video we have already superseded with a substitute.
+    if (playToken !== undefined && playToken < active.playToken) {
+      return err('Stale playback error.');
+    }
+    // YouTube can fire onError more than once for a single load.
+    if (active.retrying) return err('Already retrying.');
+    active.lastPlaybackErrorMessage = message;
     active.playbackError = message;
+    return ok;
+  }
+
+  /**
+   * Mint a retry. Called by the net layer right after a successful
+   * reportPlaybackError, and only when a YouTube search client is configured.
+   * This is the ONLY place the attempt cap is enforced — nothing the receiver
+   * sends can influence it.
+   */
+  beginRetry(): BeginRetryResult {
+    const active = this.room.active;
+    if (!active) return { ok: false, error: 'No question in play.' };
+    if (this.room.phase !== 'PLAYING') return { ok: false, error: 'Not playing.' };
+    if (active.retrying) return { ok: false, error: 'Already retrying.' };
+    if (active.retryAttempts >= MAX_SUBSTITUTION_ATTEMPTS) {
+      return { ok: false, error: 'Out of substitution attempts.' };
+    }
+
+    active.retrying = true;
+    // While retrying the room shows the retry indicator, not the error banner.
+    // lastPlaybackErrorMessage keeps the text for the eventual fallback.
+    active.playbackError = null;
+
+    // One search per failed question: attempt 2 replays the list we already
+    // have, so it needs no I/O and therefore no stale guard.
+    const needSearch = active.retryCandidates.length === 0 && active.retryAttempts === 0;
+    active.retryId = needSearch ? makeRetryId() : null;
+
+    const excludeVideoIds = [active.question.videoId];
+    if (active.substituteVideoId) excludeVideoIds.push(active.substituteVideoId);
+
+    return {
+      ok: true,
+      retryId: active.retryId ?? '',
+      title: active.question.title,
+      artist: active.question.artist,
+      excludeVideoIds,
+      needSearch,
+    };
+  }
+
+  /**
+   * Accept the outcome of the one search. The retryId equality check is the
+   * single most important correctness guard in this feature: selectCell() builds
+   * a brand-new active object and nextQuestion() nulls it, so a search that
+   * resolves after the question moved on can never touch the new question.
+   */
+  resolveRetrySearch(retryId: string, videoIds: string[]): EngineResult {
+    const active = this.room.active;
+    if (!active) return err('No question in play.');
+    if (active.retryId !== retryId) return err('Stale retry.');
+    active.retryCandidates = videoIds.slice(0, MAX_SUBSTITUTION_ATTEMPTS);
+    return ok;
+  }
+
+  /** Consume the next candidate and restart playback on it. */
+  playSubstitute(): EngineResult {
+    const active = this.room.active;
+    if (!active) return err('No question in play.');
+    // skipQuestion() reveals without nulling `active`, so retryId alone would
+    // not catch a search that resolves after the host skipped. This does.
+    if (this.room.phase !== 'PLAYING') return err('Not playing.');
+    if (!active.retrying) return err('Not retrying.');
+    const next = active.retryCandidates.shift();
+    if (!next) return err('No candidate.');
+    active.substituteVideoId = next;
+    active.retryAttempts += 1;
+    active.retrying = false;
+    active.playbackError = null;
+    // The entire delivery mechanism: toPrivateState re-projects receiverPlayback
+    // on every broadcast, and YouTubePlayer's command effect loads a new video
+    // whenever playToken changes. Also re-arms the clip timer cleanly.
+    active.playToken += 1;
+    active.startedAt = this.now();
+    return ok;
+  }
+
+  /** Give up on substitution — land in exactly the pre-feature state. */
+  exhaustRetries(): EngineResult {
+    const active = this.room.active;
+    if (!active) return err('No question in play.');
+    active.retrying = false;
+    active.playbackError = active.lastPlaybackErrorMessage ?? active.playbackError;
+    active.retryCandidates = [];
+    active.retryId = null;
     return ok;
   }
 
@@ -592,6 +735,7 @@ export class GameEngine {
     const active = this.room.active;
     if (this.room.phase !== 'PLAYING' || !active) return false;
     if (active.lockedPlayerId !== null) return false;
+    if (active.retrying) return false; // mid-substitution: no song is playing
     if (active.lockedOutPlayerIds.includes(playerId)) return false;
     const p = this.player(playerId);
     return !!p && p.connected && !p.pendingJoin;

@@ -1,9 +1,12 @@
 // Socket.IO wiring: clients send intents, the server validates via the engine
 // and broadcasts spectator-safe projections. Also schedules the clip timer.
 import type { Server, Socket } from 'socket.io';
+import { MAX_SUBSTITUTION_ATTEMPTS } from '@setlist/shared';
 import type { Ack, ClientToServer, ServerToClient } from '@setlist/shared';
 import { toPrivateState, toPublicRoom } from '../engine/project.js';
 import type { RoomManager, RoomRuntime } from './rooms.js';
+import { pickCandidates } from './songmatch.js';
+import type { YouTubeSearchClient } from './youtube.js';
 
 type IO = Server<ClientToServer, ServerToClient>;
 type Sock = Socket<ClientToServer, ServerToClient>;
@@ -31,9 +34,12 @@ const CLIP_TIMER_PAD_MS = 250;
 export function attachSocketServer(
   io: IO,
   rooms: RoomManager,
-  opts: { disconnectGraceMs?: number } = {},
+  opts: { disconnectGraceMs?: number; youtube?: YouTubeSearchClient | null } = {},
 ): void {
   const disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULT_DISCONNECT_GRACE_MS;
+  /** null = runtime song substitution is off; the server behaves as it did
+   *  before the feature existed. */
+  const youtube = opts.youtube ?? null;
   const data = (s: Sock) => s.data as SocketData;
   const standbyReceivers = new Set<string>(); // socketIds waiting for a room code
 
@@ -62,7 +68,10 @@ export function attachSocketServer(
       runtime.timer = null;
     }
     const room = runtime.engine.room;
-    if (room.phase === 'PLAYING' && room.active) {
+    // `!retrying`: a clip that failed at second 19 must not expire and reveal
+    // the answer while we're mid-search. playSubstitute() re-stamps startedAt,
+    // so the substitute gets a full clip.
+    if (room.phase === 'PLAYING' && room.active && !room.active.retrying) {
       const deadline = room.active.startedAt + room.active.durationSeconds * 1000;
       const delay = Math.max(0, deadline - Date.now());
       runtime.timer = setTimeout(() => {
@@ -71,6 +80,42 @@ export function attachSocketServer(
         if (res.ok) broadcast(runtime);
       }, delay + CLIP_TIMER_PAD_MS);
     }
+  }
+
+  /**
+   * Runtime song substitution. The engine holds all state and enforces the
+   * 2-attempt cap; this function only performs the I/O and hands the result
+   * back. Mirrors reconcileTimer's shape: side effect out here, decision in the
+   * engine. Never throws — every failure path ends in exhaustRetries().
+   */
+  async function trySubstitute(runtime: RoomRuntime): Promise<void> {
+    const engine = runtime.engine;
+    const begun = engine.beginRetry();
+    if (!begun.ok) return; // cap hit, wrong phase, already retrying
+    broadcast(runtime); // players see "finding another version…"
+
+    if (begun.needSearch) {
+      let results: Awaited<ReturnType<YouTubeSearchClient['searchVideos']>> = [];
+      try {
+        results = await youtube!.searchVideos(`${begun.title} ${begun.artist}`);
+      } catch (e) {
+        // The real client never rejects; a fake or a future one might.
+        console.warn(`[youtube] search threw: ${(e as Error).message}`);
+        results = [];
+      }
+      const picked = pickCandidates({ title: begun.title, artist: begun.artist }, results, {
+        excludeVideoIds: begun.excludeVideoIds,
+        limit: MAX_SUBSTITUTION_ATTEMPTS,
+      });
+      const applied = engine.resolveRetrySearch(begun.retryId, picked.map((c) => c.videoId));
+      // Stale: the question has moved on. Do nothing at all — no engine call,
+      // no broadcast — so the *new* question's state is never disturbed.
+      if (!applied.ok) return;
+    }
+
+    const played = engine.playSubstitute();
+    if (!played.ok) engine.exhaustRetries();
+    broadcast(runtime);
   }
 
   function runtimeForSocket(s: Sock): RoomRuntime | undefined {
@@ -180,14 +225,17 @@ export function attachSocketServer(
       broadcast(runtime);
     });
 
-    socket.on('receiver:playbackError', ({ message }) => {
+    socket.on('receiver:playbackError', ({ message, playToken }) => {
       const runtime = runtimeForSocket(socket);
       if (!runtime || !data(socket).isReceiver) return;
-      const res = runtime.engine.reportPlaybackError(message);
-      if (res.ok) {
-        console.log(`[receiver] playback error in ${runtime.engine.room.code}: ${message}`);
-        broadcast(runtime);
-      }
+      const res = runtime.engine.reportPlaybackError(message, playToken);
+      if (!res.ok) return; // stale / duplicate onError — ignore silently
+      console.log(`[receiver] playback error in ${runtime.engine.room.code}: ${message}`);
+      // Broadcast first so the no-substitution path is byte-identical to the
+      // pre-feature behavior and the host sees something immediately; the
+      // async attempt broadcasts again when it changes state.
+      broadcast(runtime);
+      if (youtube) void trySubstitute(runtime);
     });
 
     // ---- Lobby ----

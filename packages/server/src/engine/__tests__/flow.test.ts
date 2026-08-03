@@ -123,8 +123,120 @@ describe('game flow', () => {
     engine.selectCell(seats[0]!.id, 0, 0);
     expect(engine.reportPlaybackError('Video unavailable (150)')).toEqual({ ok: true });
     expect(engine.room.active!.playbackError).toBe('Video unavailable (150)');
+    // substitution is opt-in from the net layer: reporting alone changes nothing
+    expect(engine.room.active!.retrying).toBe(false);
+    expect(engine.room.active!.retryAttempts).toBe(0);
+    expect(engine.room.active!.substituteVideoId).toBeNull();
     // the host's escape hatch still works
     expect(engine.skipQuestion(seats[0]!.id)).toEqual({ ok: true });
+  });
+
+  it('runs a substitution: begin -> resolve -> play, capped at two attempts', () => {
+    const { engine, seats } = startedGame(2071, 2);
+    engine.selectCell(seats[0]!.id, 0, 0);
+    const active = engine.room.active!;
+    const originalVideoId = active.question.videoId;
+    const tokenBefore = active.playToken;
+
+    expect(engine.reportPlaybackError('Embedding disabled (150)')).toEqual({ ok: true });
+    const begun = engine.beginRetry();
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) throw new Error('unreachable');
+    expect(begun.needSearch).toBe(true);
+    expect(begun.excludeVideoIds).toEqual([originalVideoId]);
+    expect(begun.title).toBe(active.question.title);
+    // retrying hides the error banner and cools the buzzers
+    expect(active.retrying).toBe(true);
+    expect(active.playbackError).toBeNull();
+    expect(engine.canBuzz(seats[1]!.id)).toBe(false);
+    expect(engine.buzz(seats[1]!.id)).toEqual({ ok: false, error: 'Finding another version…' });
+    checkInvariants(engine);
+
+    expect(engine.resolveRetrySearch(begun.retryId, ['sub1aaaaaaa', 'sub2bbbbbbb'])).toEqual({
+      ok: true,
+    });
+    expect(engine.playSubstitute()).toEqual({ ok: true });
+    expect(active.substituteVideoId).toBe('sub1aaaaaaa');
+    expect(active.retryAttempts).toBe(1);
+    expect(active.retrying).toBe(false);
+    expect(active.playToken).toBe(tokenBefore + 1);
+    expect(engine.canBuzz(seats[1]!.id)).toBe(true);
+    checkInvariants(engine);
+
+    // attempt 2 needs no search
+    expect(engine.reportPlaybackError('Embedding disabled (150)')).toEqual({ ok: true });
+    const second = engine.beginRetry();
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('unreachable');
+    expect(second.needSearch).toBe(false);
+    expect(second.excludeVideoIds).toEqual([originalVideoId, 'sub1aaaaaaa']);
+    expect(engine.playSubstitute()).toEqual({ ok: true });
+    expect(active.substituteVideoId).toBe('sub2bbbbbbb');
+    expect(active.retryAttempts).toBe(2);
+
+    // the cap: no third attempt, ever
+    expect(engine.reportPlaybackError('Embedding disabled (150)')).toEqual({ ok: true });
+    expect(engine.beginRetry()).toEqual({ ok: false, error: 'Out of substitution attempts.' });
+    expect(engine.exhaustRetries()).toEqual({ ok: true });
+    expect(active.retrying).toBe(false);
+    expect(active.playbackError).toBe('Embedding disabled (150)');
+    expect(engine.room.phase).toBe('PLAYING');
+    expect(engine.skipQuestion(seats[0]!.id)).toEqual({ ok: true });
+    checkInvariants(engine);
+  });
+
+  it('ignores a stale retry and refuses to substitute once the host has skipped', () => {
+    const { engine, seats } = startedGame(2072, 2);
+    engine.selectCell(seats[0]!.id, 0, 0);
+    engine.reportPlaybackError('Embedding disabled (150)');
+    const begun = engine.beginRetry();
+    if (!begun.ok) throw new Error('unreachable');
+
+    // a search that resolves against a different retryId is a no-op
+    expect(engine.resolveRetrySearch('r_bogus', ['nope0000000'])).toEqual({
+      ok: false,
+      error: 'Stale retry.',
+    });
+    expect(engine.room.active!.retryCandidates).toEqual([]);
+
+    // skipQuestion reveals WITHOUT nulling active, so the phase guard is what
+    // stops a late search from restarting playback on a revealed question.
+    expect(engine.skipQuestion(seats[0]!.id)).toEqual({ ok: true });
+    expect(engine.room.active!.retrying).toBe(false);
+    expect(engine.resolveRetrySearch(begun.retryId, ['late0000000'])).toEqual({ ok: true });
+    expect(engine.playSubstitute()).toEqual({ ok: false, error: 'Not playing.' });
+    expect(engine.room.phase).toBe('REVEAL');
+    expect(engine.room.active!.substituteVideoId).toBeNull();
+  });
+
+  it('rejects a duplicate or superseded playback error report', () => {
+    const { engine, seats } = startedGame(2073, 2);
+    engine.selectCell(seats[0]!.id, 0, 0);
+    const active = engine.room.active!;
+
+    // an error for a playToken older than the current one is a late onError
+    expect(engine.reportPlaybackError('boom', active.playToken - 1)).toEqual({
+      ok: false,
+      error: 'Stale playback error.',
+    });
+    expect(active.playbackError).toBeNull();
+
+    expect(engine.reportPlaybackError('boom', active.playToken)).toEqual({ ok: true });
+    engine.beginRetry();
+    // YouTube fires onError twice for one load — the second is dropped
+    expect(engine.reportPlaybackError('boom')).toEqual({ ok: false, error: 'Already retrying.' });
+  });
+
+  it('clears the retry indicator when the clip expires mid-search', () => {
+    const { engine, seats, clock } = startedGame(2074, 2);
+    engine.selectCell(seats[0]!.id, 0, 0);
+    engine.reportPlaybackError('Embedding disabled (150)');
+    engine.beginRetry();
+    expect(engine.room.active!.retrying).toBe(true);
+    clock.advance(60_000);
+    expect(engine.clipExpired()).toEqual({ ok: true });
+    // a REVEAL screen must never render "finding another version…"
+    expect(engine.room.active!.retrying).toBe(false);
   });
 
   it('pauses when the cast drops mid-game and resumes when it returns', () => {

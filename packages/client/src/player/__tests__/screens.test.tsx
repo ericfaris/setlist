@@ -54,6 +54,32 @@ describe('BuzzScreen', () => {
     expect(button).toBeDisabled();
   });
 
+  it('cools the buzzer and explains itself while the server hunts a substitute', () => {
+    const pub = makePub({ active: makeActive({ retrying: true }) });
+    render(<BuzzScreen pub={pub} priv={makePriv({ playerId: 'p2', canBuzz: false })} />);
+    const button = screen.getByRole('button', { name: /Finding another version/ });
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/That track won't play — finding another version/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'BUZZ' })).not.toBeInTheDocument();
+  });
+
+  it('hides the stale error banner while retrying, and shows it once exhausted', () => {
+    const retrying = makePub({
+      active: makeActive({ retrying: true, playbackError: 'Embedding disabled (150)' }),
+    });
+    const { unmount } = render(
+      <BuzzScreen pub={retrying} priv={makePriv({ canBuzz: false })} />,
+    );
+    expect(screen.queryByText(/This track won't play/)).not.toBeInTheDocument();
+    unmount();
+
+    const exhausted = makePub({
+      active: makeActive({ retrying: false, playbackError: 'Embedding disabled (150)' }),
+    });
+    render(<BuzzScreen pub={exhausted} priv={makePriv({ canBuzz: false })} />);
+    expect(screen.getByText(/This track won't play/)).toBeInTheDocument();
+  });
+
   it('does not dispatch when disabled', () => {
     const spy = vi.spyOn(store, 'buzz').mockResolvedValue(true);
     const pub = makePub({ phase: 'LOCKED', active: makeActive({ lockedPlayerId: 'p3' }) });

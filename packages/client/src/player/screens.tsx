@@ -139,6 +139,13 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
     cls += ' out';
     label = '❌ You already guessed';
     disabled = true;
+  } else if (active.retrying) {
+    // Ahead of the generic !canBuzz branch so the reason is explained rather
+    // than the button just going dead. After the lock branches: a lock is a
+    // stronger statement, and the two can't co-occur anyway.
+    cls += ' out';
+    label = '🔎 Finding another version…';
+    disabled = true;
   } else if (!priv.canBuzz) {
     disabled = true;
   } else if (sent) {
@@ -153,7 +160,10 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
           <span className="pill">${active.value}</span>
         </div>
         <ClipBar startedAt={active.startedAt} durationSeconds={active.durationSeconds} />
-        {active.playbackError && (
+        {active.retrying && (
+          <div className="banner small">🔎 That track won't play — finding another version…</div>
+        )}
+        {!active.retrying && active.playbackError && (
           <div className="banner small">This track won't play: {active.playbackError}</div>
         )}
       </div>

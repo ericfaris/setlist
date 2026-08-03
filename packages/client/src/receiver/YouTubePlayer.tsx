@@ -54,6 +54,11 @@ export function YouTubePlayer({ playback }: { playback: ReceiverPlayback | null 
   // or the very first clip of a game silently never loads.
   const [ready, setReady] = useState(false);
   const lastToken = useRef<number | null>(null);
+  // onError is created inside the create-once effect below, so it can never
+  // close over the current playback. This ref is how the token escapes that
+  // closure — without it the server can't tell a late error from the previous
+  // video apart from a real one on the substitute.
+  const currentToken = useRef<number | null>(null);
   const stallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [needsGesture, setNeedsGesture] = useState(false);
 
@@ -93,6 +98,7 @@ export function YouTubePlayer({ playback }: { playback: ReceiverPlayback | null 
           onError: (e: { data: number }) => {
             store.reportPlaybackError(
               `${ERROR_MESSAGES[e.data] ?? 'Playback error'} (${e.data})`,
+              currentToken.current ?? undefined,
             );
           },
         },
@@ -118,6 +124,7 @@ export function YouTubePlayer({ playback }: { playback: ReceiverPlayback | null 
       return;
     }
 
+    currentToken.current = playback.playToken;
     if (playback.playToken !== lastToken.current) {
       lastToken.current = playback.playToken;
       try {

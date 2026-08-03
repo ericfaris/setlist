@@ -206,8 +206,8 @@ class GameStore {
   receiverStandby() {
     this.socket.emit('receiver:standby', {});
   }
-  reportPlaybackError(message: string) {
-    this.socket.emit('receiver:playbackError', { message });
+  reportPlaybackError(message: string, playToken?: number) {
+    this.socket.emit('receiver:playbackError', { message, playToken });
   }
 
   async receiverSubscribe(code: string): Promise<boolean> {
