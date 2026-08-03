@@ -113,21 +113,36 @@ export async function makeRoom(
   };
 }
 
-/** The id of the first song the host has not played yet, off their own
- *  (host-only) setlist projection. */
+/** The id of the song on deck, off the host's own (host-only) projection. */
 export function firstSongId(host: Client): string {
-  const song = host.priv!.setlist!.flatMap((sec) => sec.songs).find((s) => !s.used);
-  if (!song) throw new Error('no unused songs in the host setlist');
-  return song.id;
+  const onDeck = host.priv?.hostOnDeck;
+  if (!onDeck) throw new Error('no song on deck in the host projection');
+  return onDeck.songId;
 }
 
-/** Start the game (if it hasn't been) and arm the first unused song. */
+/** Pick this round's categories: the first `required` with songs left. */
+export async function pickRound(host: Client): Promise<string[]> {
+  const picker = host.priv?.categoryPicker;
+  if (!picker) throw new Error('no category picker in the host projection');
+  const categoryIds = picker.groups
+    .flatMap((g) => g.categories)
+    .filter((c) => c.available > 0)
+    .slice(0, picker.required)
+    .map((c) => c.id);
+  const res = await host.emit('round:pickCategories', { categoryIds });
+  if (!res.ok) throw new Error(res.error);
+  await tick();
+  return categoryIds;
+}
+
+/** Start the game (if it hasn't been), pick a round, and arm the on-deck song. */
 export async function armRound(host: Client): Promise<string> {
   if (host.pub?.phase === 'LOBBY') {
     const started = await host.emit('game:start', {});
     if (!started.ok) throw new Error(started.error);
     await tick();
   }
+  if (host.pub?.phase === 'ROUND_SETUP') await pickRound(host);
   const songId = firstSongId(host);
   const res = await host.emit('setlist:start', { songId });
   if (!res.ok) throw new Error(res.error);

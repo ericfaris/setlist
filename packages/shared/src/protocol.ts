@@ -34,14 +34,22 @@ export interface ClientToServer {
   /** TV receiver: no room code yet, wait for the host to cast. */
   'receiver:standby': (_: {}) => void;
 
-  /** Host starts the game: LOBBY -> SETLIST (builds the setlist). */
+  /** Host starts the game: LOBBY -> ROUND_SETUP (builds the catalog). */
   'game:start': (_: {}, ack: (res: Ack<{}>) => void) => void;
   /** Host updates room settings (lobby only). */
   'game:settings': (payload: Partial<{ penalizeWrongAnswers: boolean }>) => void;
   /** Host hands the crown to another connected player. */
   'host:transfer': (payload: { playerId: string }, ack: (res: Ack<{}>) => void) => void;
 
-  /** Host arms the round on a chosen setlist song: SETLIST -> ARMED. */
+  /** Host picks this round's categories: ROUND_SETUP -> ON_DECK. The server
+   *  samples the songs and sequences them; there is no per-song choice. */
+  'round:pickCategories': (
+    payload: { categoryIds: string[] },
+    ack: (res: Ack<{}>) => void,
+  ) => void;
+
+  /** Host arms the buzzers on the ON-DECK song: ON_DECK -> ARMED. The songId
+   *  must be the one the server put on deck. */
   'setlist:start': (payload: { songId: string }, ack: (res: Ack<{}>) => void) => void;
 
   /**
@@ -54,7 +62,7 @@ export interface ClientToServer {
   'judge:answer': (payload: JudgeVerdict, ack: (res: Ack<{}>) => void) => void;
   /** Host ends the round and shows the answer: -> REVEAL. */
   'question:reveal': (_: {}, ack: (res: Ack<{}>) => void) => void;
-  /** Host advances: REVEAL -> SETLIST | GAME_OVER. */
+  /** Host advances: REVEAL -> ON_DECK | ROUND_SETUP | GAME_OVER. */
   'question:next': (_: {}, ack: (res: Ack<{}>) => void) => void;
 
   /** Host force-ends or restarts. */
@@ -68,7 +76,7 @@ export interface ServerToClient {
   'host:created': (payload: { code: string }) => void;
   /** Full public room projection (broadcast to all clients in the room). */
   'room:state': (payload: PublicRoom) => void;
-  /** Per-socket private state (your seat, host answer, host setlist). */
+  /** Per-socket private state (your seat, host answer, host picker/on-deck). */
   'you:state': (payload: PrivateState) => void;
   /** Room closed / no longer exists. */
   'room:closed': (payload: { reason: string }) => void;

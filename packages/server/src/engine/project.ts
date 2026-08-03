@@ -7,24 +7,38 @@
 //      until `revealed`; before that only the host sees it, via
 //      PrivateState.hostAnswer. The host picked the song, so they get it from
 //      the moment the round is armed — but on their own socket and nowhere else.
-//   2. The SETLIST's song data (titles, artists, videoIds) — only
-//      PrivateState.setlist, and only for the host. A player who saw a videoId
-//      could just look the song up; a player who saw the list knows what's
-//      coming.
+//   2. The CATALOG's song data (titles, artists, videoIds) — only
+//      PrivateState.hostOnDeck, only for the host, and only for the one song
+//      the server has queued up next. A player who saw a videoId could just
+//      look the song up.
+//
+// The CATEGORY of the upcoming song is public from ON_DECK onwards
+// (PublicRoom.onDeck) — a category name is not an answer. PublicOnDeck carries
+// nothing else about the song, and is built field by field so it cannot grow
+// one by accident.
 //
 // The TV receiver is now the LEAST privileged surface: it plays no media, so it
 // needs nothing private at all.
 // ============================================================================
 import type {
+  CategoryGroup,
+  CategoryOption,
+  CategoryPicker,
   GameRoom,
-  HostSetlistSection,
+  HostSong,
   PrivateState,
   PublicActiveQuestion,
   PublicAnswer,
+  PublicOnDeck,
   PublicRoom,
-  SetlistState,
+  PublicRound,
 } from '@setlist/shared';
-import { SONG_POINT_VALUE } from '@setlist/shared';
+import {
+  SONG_POINT_VALUE,
+  SONGS_PER_CATEGORY_PER_ROUND,
+  TAXONOMY_GROUPS,
+  parseCategoryGroup,
+} from '@setlist/shared';
 import type { GameEngine } from './engine.js';
 
 export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
@@ -51,6 +65,28 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
     };
   }
 
+  const r = room.phase === 'GAME_OVER' ? null : room.round;
+
+  // Round progress, counts only.
+  const round: PublicRound | null = r
+    ? { number: r.number, songsTotal: r.queue.length, songsPlayed: r.cursor }
+    : null;
+
+  // The ONE new public field. Category title + counters and nothing else —
+  // never a song id, title, artist or videoId. Built field by field, and only
+  // in ON_DECK.
+  let onDeck: PublicOnDeck | null = null;
+  if (r && room.phase === 'ON_DECK') {
+    const songId = r.queue[r.cursor];
+    const cat = songId ? r.categories.find((c) => c.songIds.includes(songId)) : undefined;
+    onDeck = {
+      categoryTitle: cat?.title ?? '',
+      roundNumber: r.number,
+      indexInRound: r.cursor + 1,
+      songsInRound: r.queue.length,
+    };
+  }
+
   const songs = room.setlist?.songs ?? [];
 
   return {
@@ -68,6 +104,8 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       pendingJoin: p.pendingJoin,
     })),
     active,
+    onDeck,
+    round,
     // Counts only. There is deliberately NO setlist field on PublicRoom — the
     // songs live on GameRoom now, and this is the sole reason that is safe.
     songsTotal: songs.length,
@@ -79,23 +117,46 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
   };
 }
 
-/** Group the setlist into host-facing sections. Field by field, never spread —
- *  a SetlistSong carries the whole BankQuestion. */
-function toHostSetlist(setlist: SetlistState): HostSetlistSection[] {
-  return setlist.sections
-    .map((section) => ({
+/**
+ * The host's round picker: every catalog category, grouped by its taxonomy
+ * group, with the count of songs it still has. Counts and titles only — no song
+ * ever appears here. Empty groups are dropped; the rest keep TAXONOMY_GROUPS
+ * order, so a bank the new builder didn't produce lands wholesale in 'other'
+ * ("All categories") and stays fully playable.
+ */
+function toCategoryPicker(engine: GameEngine): CategoryPicker | null {
+  const room = engine.room;
+  const setlist = room.setlist;
+  const round = room.round;
+  if (!setlist || !round) return null;
+
+  const unused = engine.unusedByCategory();
+  const bySlug = new Map<string, CategoryOption[]>();
+  for (const section of setlist.sections) {
+    const slug = parseCategoryGroup(section.id);
+    const option: CategoryOption = {
+      id: section.id,
       title: section.title,
-      songs: setlist.songs
-        .filter((s) => s.sectionIndex === section.index)
-        .map((s) => ({
-          id: s.id,
-          title: s.question.title,
-          artist: s.question.artist,
-          videoId: s.question.videoId,
-          used: s.used,
-        })),
-    }))
-    .filter((section) => section.songs.length > 0);
+      available: unused.get(section.index) ?? 0,
+    };
+    const list = bySlug.get(slug);
+    if (list) list.push(option);
+    else bySlug.set(slug, [option]);
+  }
+
+  const groups: CategoryGroup[] = [];
+  for (const g of TAXONOMY_GROUPS) {
+    const categories = bySlug.get(g.slug);
+    if (!categories || categories.length === 0) continue;
+    groups.push({ slug: g.slug, label: g.label, categories });
+  }
+
+  return {
+    roundNumber: round.number,
+    required: engine.requiredCategoryCount(round.number),
+    perCategory: SONGS_PER_CATEGORY_PER_ROUND,
+    groups,
+  };
 }
 
 export function toPrivateState(engine: GameEngine, playerId: string | null): PrivateState {
@@ -112,7 +173,8 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
       canBuzz: false,
       hostAnswer: null,
       hostVideoId: null,
-      setlist: null,
+      categoryPicker: null,
+      hostOnDeck: null,
     };
   }
 
@@ -127,9 +189,23 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
   // any point while armed/locked, server-driven so a reload/reconnect doesn't
   // strand them without it.
   const hostVideoId: string | null = isHost && a ? a.question.videoId : null;
-  // Host-only, and only while browsing: the full setlist, answers and all.
-  const setlist =
-    isHost && room.phase === 'SETLIST' && room.setlist ? toHostSetlist(room.setlist) : null;
+  // Host-only, and only while picking: category titles and counts, no songs.
+  const categoryPicker =
+    isHost && room.phase === 'ROUND_SETUP' ? toCategoryPicker(engine) : null;
+  // Host-only, and only while a song is on deck: the one song they must play.
+  // Field by field — a SetlistSong carries the whole BankQuestion.
+  let hostOnDeck: HostSong | null = null;
+  if (isHost && room.phase === 'ON_DECK') {
+    const song = engine.onDeckSong();
+    if (song) {
+      hostOnDeck = {
+        songId: song.id,
+        title: song.question.title,
+        artist: song.question.artist,
+        videoId: song.question.videoId,
+      };
+    }
+  }
 
   return {
     playerId,
@@ -139,6 +215,7 @@ export function toPrivateState(engine: GameEngine, playerId: string | null): Pri
     canBuzz: engine.canBuzz(playerId),
     hostAnswer,
     hostVideoId,
-    setlist,
+    categoryPicker,
+    hostOnDeck,
   };
 }

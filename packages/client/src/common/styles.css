@@ -96,6 +96,18 @@ input:focus, select:focus { outline: 2px solid var(--accent); }
   background: var(--bg-2);
 }
 .setlist .song.used { opacity: 0.4; cursor: default; }
+.setlist .song.picked { border-color: var(--accent); }
+.chiprow { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: inherit;
+  width: auto;
+}
 
 a.primary {
   display: block;

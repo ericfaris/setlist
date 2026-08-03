@@ -3,14 +3,22 @@
 // One GameEngine instance owns exactly one GameRoom. Net side effects live
 // outside; this file is deterministic given { rng, bank, now }.
 //
-//   LOBBY --game:start--> SETLIST --setlist:start--> ARMED --(first buzz)--> LOCKED
-//                            ^                        |                        |
-//                            |     question:reveal    v      judge:answer      v
-//                            +---------------------- REVEAL <------------------+
-//                                                      | (question:next)
-//                                                      v
-//                               every song used --> GAME_OVER   (also: host:forceEnd
-//                                                                from any phase)
+// Play runs as three fixed rounds. At the start of each round the host picks
+// 5/4/3 categories; the server samples up to 5 not-yet-used songs from each and
+// sequences them round-robin. Nobody browses the catalog.
+//
+//   LOBBY --game:start--> ROUND_SETUP --round:pickCategories--> ON_DECK
+//                             ^                                    | setlist:start
+//                             |                                    v
+//                             |                                  ARMED --(buzz)--> LOCKED
+//                             |                                    |                 |
+//                             |         question:reveal            v  judge:answer   v
+//                             |          +------------------->  REVEAL <-------------+
+//     round done & round < 3  |          |                         | question:next
+//     ------------------------+          |                         v
+//                                        |     more songs in round --> ON_DECK
+//                                        |     round done & round==3 --> GAME_OVER
+//                                        (also: host:forceEnd from any phase)
 //
 // Nothing plays in our app: the host plays the song themselves from a native
 // YouTube Music link and then arms the buzzers. There is no timer of any kind.
@@ -18,7 +26,10 @@
 import {
   MAX_PLAYERS,
   MIN_PLAYERS,
+  ROUND_CATEGORY_COUNTS,
   SONG_POINT_VALUE,
+  SONGS_PER_CATEGORY_PER_ROUND,
+  TOTAL_ROUNDS,
   type ActiveQuestion,
   type GameRoom,
   type JudgeVerdict,
@@ -26,6 +37,7 @@ import {
   type QuestionBank,
   type RoomPhase,
   type RoomSettings,
+  type RoundCategory,
   type SetlistSection,
   type SetlistSong,
   type SetlistState,
@@ -38,7 +50,13 @@ const ok: EngineResult = { ok: true };
 const err = (error: string): EngineResult => ({ ok: false, error });
 
 /** Phases where a game is actually under way (used by pause/mid-game join). */
-const IN_PROGRESS_PHASES: RoomPhase[] = ['SETLIST', 'ARMED', 'LOCKED', 'REVEAL'];
+const IN_PROGRESS_PHASES: RoomPhase[] = [
+  'ROUND_SETUP',
+  'ON_DECK',
+  'ARMED',
+  'LOCKED',
+  'REVEAL',
+];
 
 export interface EngineDeps {
   rng?: Rng;
@@ -78,8 +96,8 @@ export class GameEngine {
   private joinCounter = 0;
 
   constructor(code: string, deps: EngineDeps) {
-    // Kept even though the setlist is built in bank order with no RNG: the room
-    // code generator uses its own, and removing the dep churns every harness.
+    // Drives the per-round category sampling (the catalog itself is still built
+    // in bank order with no RNG at all).
     this.rng = deps.rng ?? makeRng();
     this.bank = deps.bank;
     this.now = deps.now ?? (() => Date.now());
@@ -89,6 +107,7 @@ export class GameEngine {
       settings: { ...DEFAULT_SETTINGS },
       players: [],
       setlist: null,
+      round: null,
       active: null,
       winnerPlayerIds: [],
       castConnected: false,
@@ -238,31 +257,40 @@ export class GameEngine {
     const setlist = this.buildSetlist();
     if (!setlist) return err('The question bank has no songs.');
     this.room.setlist = setlist;
-    this.room.phase = 'SETLIST';
+    this.room.round = null;
+    this.beginRound(1);
     return ok;
   }
 
   /**
-   * Flatten the bank into a browsable setlist: every category is a section,
-   * every question a song, in bank order (the host is deliberately browsing —
-   * a stable order beats a reshuffle). Songs are deduped by videoId, first
-   * section wins, so an AI-categorised bank that put one track in two themes
-   * can't offer it twice with two independent `used` flags.
+   * Flatten the bank into the whole-game CATALOG: every category is a section,
+   * every question a song, in bank order. Nobody browses this — the host picks
+   * categories and the server samples from each.
+   *
+   * Songs are deduped by videoId WITHIN A SECTION ONLY. Under the curated
+   * taxonomy one track legitimately belongs to "Rock", "90s Rock" and "90s
+   * Grunge" at once; the old global "first section wins" dedupe would gut every
+   * category after the first. "A song never plays twice in one game" is
+   * enforced instead by markUsedByVideoId() at draw time.
    */
   private buildSetlist(): SetlistState | null {
     const sections: SetlistSection[] = [];
     const songs: SetlistSong[] = [];
-    const seenVideoIds = new Set<string>();
 
     this.bank.categories.forEach((cat, sectionIndex) => {
       sections.push({ index: sectionIndex, id: cat.id, title: cat.title });
-      cat.questions.forEach((q, j) => {
+      // Reset per section: the dedupe is deliberately local to this category.
+      const seenVideoIds = new Set<string>();
+      let j = 0;
+      cat.questions.forEach((q) => {
         if (seenVideoIds.has(q.videoId)) return;
         seenVideoIds.add(q.videoId);
         // Song ids are positional and OPAQUE. Deriving them from the bank's
         // question id (`q_<videoId>`) would put a videoId on the wire — the id
-        // is projected publicly as PublicActiveQuestion.songId.
+        // is projected publicly as PublicActiveQuestion.songId. The index is the
+        // index WITHIN the section after dedupe, so ids stay unique.
         songs.push({ id: `s${sectionIndex}q${j}`, sectionIndex, question: q, used: false });
+        j += 1;
       });
     });
 
@@ -270,18 +298,144 @@ export class GameEngine {
     return { sections, songs };
   }
 
+  // ------------------------------------------------------------ round setup
+  /** sectionIndex -> how many of its songs are still undrawn this game.
+   *  PUBLIC: the host picker projection needs the same counts. */
+  unusedByCategory(): Map<number, number> {
+    const counts = new Map<number, number>();
+    for (const section of this.room.setlist?.sections ?? []) counts.set(section.index, 0);
+    for (const song of this.room.setlist?.songs ?? []) {
+      if (song.used) continue;
+      counts.set(song.sectionIndex, (counts.get(song.sectionIndex) ?? 0) + 1);
+    }
+    return counts;
+  }
+
+  /** Sections with at least one undrawn song — the ones a round may pick. */
+  private selectableSections(): number[] {
+    return [...this.unusedByCategory().entries()]
+      .filter(([, n]) => n > 0)
+      .map(([index]) => index);
+  }
+
+  /**
+   * How many categories round `n` needs. Normally 5/4/3, but clamped to what is
+   * actually selectable so a small bank (the bundled 6x6 sample) plays a short
+   * round instead of deadlocking.
+   */
+  requiredCategoryCount(roundNumber: number): number {
+    const nominal = ROUND_CATEGORY_COUNTS[roundNumber - 1] ?? 0;
+    return Math.min(nominal, this.selectableSections().length);
+  }
+
+  /**
+   * Mark EVERY catalog entry sharing this videoId as used. The catalog dedupes
+   * only within a section, so the same track can sit in several categories —
+   * this is the half of the bargain that keeps it from being drawn twice.
+   */
+  private markUsedByVideoId(videoId: string): void {
+    for (const song of this.room.setlist?.songs ?? []) {
+      if (song.question.videoId === videoId) song.used = true;
+    }
+  }
+
+  /** Open round `number`, or end the game if there is nothing left to pick. */
+  private beginRound(number: number): void {
+    if (this.selectableSections().length === 0) {
+      this.endGame();
+      return;
+    }
+    this.room.round = { number, categories: [], queue: [], cursor: 0 };
+    this.room.phase = 'ROUND_SETUP';
+  }
+
+  /**
+   * The host's one decision per round: which categories to play. The server
+   * samples the songs — there is deliberately no way to choose an individual
+   * song, which is what makes the sequencing automatic.
+   */
+  pickCategories(hostId: string, categoryIds: string[]): EngineResult {
+    if (!this.isHost(hostId)) return err('Only the host can pick categories.');
+    if (this.room.phase !== 'ROUND_SETUP') return err('Not picking categories right now.');
+    const setlist = this.room.setlist;
+    const round = this.room.round;
+    if (!setlist || !round) return err('Not picking categories right now.');
+
+    const required = this.requiredCategoryCount(round.number);
+    if (categoryIds.length !== required) return err(`Pick exactly ${required} categories.`);
+
+    const unused = this.unusedByCategory();
+    const seen = new Set<string>();
+    const chosen: SetlistSection[] = [];
+    for (const id of categoryIds) {
+      if (seen.has(id)) return err('Duplicate category.');
+      seen.add(id);
+      const section = setlist.sections.find((s) => s.id === id);
+      if (!section) return err('No such category.');
+      if ((unused.get(section.index) ?? 0) === 0) return err('That category has no songs left.');
+      chosen.push(section);
+    }
+
+    const categories: RoundCategory[] = [];
+    for (const section of chosen) {
+      const pool = setlist.songs.filter((s) => !s.used && s.sectionIndex === section.index);
+      const take = Math.min(SONGS_PER_CATEGORY_PER_ROUND, pool.length);
+      const drawn = this.rng.shuffle([...pool]).slice(0, take);
+      // `used` flips at SAMPLE time, not play time — that is what makes "never
+      // re-sampled in a later round" structural rather than bookkeeping.
+      for (const song of drawn) this.markUsedByVideoId(song.question.videoId);
+      categories.push({
+        categoryId: section.id,
+        title: section.title,
+        songIds: drawn.map((s) => s.id),
+      });
+    }
+
+    // Round-robin across the picked categories: A B C D E A B C D E …
+    const queue: string[] = [];
+    const longest = Math.max(0, ...categories.map((c) => c.songIds.length));
+    for (let i = 0; i < longest; i++) {
+      for (const cat of categories) {
+        const id = cat.songIds[i];
+        if (id !== undefined) queue.push(id);
+      }
+    }
+
+    round.categories = categories;
+    round.queue = queue;
+    round.cursor = 0;
+    this.room.phase = 'ON_DECK';
+    return ok;
+  }
+
+  private onDeckSongId(): string | null {
+    const round = this.room.round;
+    if (!round) return null;
+    return round.queue[round.cursor] ?? null;
+  }
+
+  /** The song the server has queued up next — host-only info, for the projector. */
+  onDeckSong(): SetlistSong | null {
+    const id = this.onDeckSongId();
+    if (!id) return null;
+    return this.room.setlist?.songs.find((s) => s.id === id) ?? null;
+  }
+
   // ---------------------------------------------------------- setlist flow
-  /** Arm the buzzers on a chosen song. The host has already played it out loud. */
+  /** Arm the buzzers on the on-deck song. The host has already played it out loud. */
   startSong(hostId: string, songId: string): EngineResult {
     if (!this.isHost(hostId)) return err('Only the host can start a song.');
-    if (this.room.phase !== 'SETLIST') return err('Not choosing a song right now.');
+    if (this.room.phase !== 'ON_DECK') return err('No song is on deck.');
     const setlist = this.room.setlist;
     if (!setlist) return err('No setlist.');
+    const onDeck = this.onDeckSongId();
+    if (!onDeck) return err('No song is on deck.');
     const song = setlist.songs.find((s) => s.id === songId);
     if (!song) return err('No such song.');
-    if (song.used) return err('That song has already been played.');
+    // Guards a double-tap and a stale client: there is exactly one playable song.
+    if (song.id !== onDeck) return err('That song is not on deck.');
 
-    song.used = true;
+    // Already marked used when it was drawn — do NOT re-mark it here.
     this.room.active = {
       songId: song.id,
       sectionIndex: song.sectionIndex,
@@ -403,11 +557,19 @@ export class GameEngine {
     for (const p of this.room.players) p.pendingJoin = false;
 
     this.room.active = null;
-    const allUsed = (this.room.setlist?.songs ?? []).every((s) => s.used);
-    if (allUsed) {
+    const round = this.room.round;
+    if (!round) {
       this.endGame();
+      return ok;
+    }
+    round.cursor += 1;
+    if (round.cursor < round.queue.length) {
+      this.room.phase = 'ON_DECK';
+    } else if (round.number < TOTAL_ROUNDS) {
+      // beginRound() itself ends the game if nothing is left to pick.
+      this.beginRound(round.number + 1);
     } else {
-      this.room.phase = 'SETLIST';
+      this.endGame();
     }
     return ok;
   }
@@ -424,6 +586,7 @@ export class GameEngine {
     if (!this.isHost(hostId)) return err('Only the host can start a rematch.');
     this.room.phase = 'LOBBY';
     this.room.setlist = null;
+    this.room.round = null;
     this.room.active = null;
     this.room.winnerPlayerIds = [];
     this.room.pause = { active: false, reason: null, waitingForPlayerId: null };

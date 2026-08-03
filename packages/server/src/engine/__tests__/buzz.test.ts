@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   checkInvariants,
-  firstUnusedSongId,
+  armNext,
   resetInvariantMemory,
   startedGame,
 } from './harness.js';
@@ -15,7 +15,7 @@ const HOST_CANT_BUZZ = "The host doesn't buzz on this one.";
 describe('buzz race', () => {
   it('only the first buzz the engine processes wins the lock', () => {
     const { engine, seats, bank } = startedGame(11, 4);
-    expect(engine.startSong(seats[0]!.id, firstUnusedSongId(engine))).toEqual({ ok: true });
+    expect(armNext(engine, seats[0]!.id)).toEqual({ ok: true });
     expect(engine.room.phase).toBe('ARMED');
 
     const first = engine.buzz(seats[1]!.id);
@@ -32,7 +32,7 @@ describe('buzz race', () => {
 
   it('stamps lockedAt from the server clock', () => {
     const { engine, clock, seats } = startedGame(12, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     clock.advance(4321);
     engine.buzz(seats[1]!.id);
     expect(engine.room.active!.lockedAt).toBe(clock.now());
@@ -40,10 +40,10 @@ describe('buzz race', () => {
 
   it('rejects a buzz outside ARMED', () => {
     const { engine, seats } = startedGame(13, 2);
-    // SETLIST: the host has not armed anything, so nothing is live
+    // ROUND_SETUP: the host has not armed anything, so nothing is live
     expect(engine.buzz(seats[1]!.id)).toEqual({ ok: false, error: 'Buzzers are not armed.' });
     expect(engine.canBuzz(seats[1]!.id)).toBe(false);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.buzz(seats[1]!.id);
     engine.judge(seats[0]!.id, { titleCorrect: true, artistCorrect: true });
     expect(engine.room.phase).toBe('REVEAL');
@@ -52,7 +52,7 @@ describe('buzz race', () => {
 
   it('the host cannot buzz on the round they armed', () => {
     const { engine, seats, bank } = startedGame(131, 3);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     expect(engine.canBuzz(seats[0]!.id)).toBe(false);
     expect(engine.buzz(seats[0]!.id)).toEqual({ ok: false, error: HOST_CANT_BUZZ });
     expect(engine.room.phase).toBe('ARMED');
@@ -62,7 +62,7 @@ describe('buzz race', () => {
 
   it('a demoted ex-host stays excluded from the round they armed', () => {
     const { engine, seats, bank } = startedGame(132, 3);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     expect(engine.transferHost(seats[0]!.id, seats[1]!.id)).toEqual({ ok: true });
     // the ex-host is a plain player again — but they picked this song
     expect(engine.room.players.find((p) => p.id === seats[0]!.id)!.isHost).toBe(false);
@@ -77,7 +77,7 @@ describe('buzz race', () => {
 
   it('re-arms the other players after a wrong judgement but not the loser', () => {
     const { engine, seats, bank } = startedGame(14, 4);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.buzz(seats[1]!.id);
     expect(engine.judge(seats[0]!.id, { titleCorrect: false, artistCorrect: false })).toEqual({
       ok: true,
@@ -96,7 +96,7 @@ describe('buzz race', () => {
 
   it('a 2-player game auto-reveals when the single eligible guest answers wrong', () => {
     const { engine, seats, bank } = startedGame(16, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.buzz(seats[1]!.id);
     engine.judge(seats[0]!.id, { titleCorrect: false, artistCorrect: false });
     // the host is not in the pool, so there is nobody left — reveal, don't hang
@@ -107,7 +107,7 @@ describe('buzz race', () => {
 
   it('the host can reveal from ARMED with nobody buzzed', () => {
     const { engine, seats, bank } = startedGame(17, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     expect(engine.revealQuestion(seats[1]!.id)).toEqual({
       ok: false,
       error: 'Only the host can reveal the answer.',
@@ -123,7 +123,7 @@ describe('buzz race', () => {
 
   it('refuses a buzz from a mid-game joiner until the next question', () => {
     const { engine, seats, bank } = startedGame(18, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     const late = engine.join({ displayName: 'Latecomer' });
     expect(late.ok).toBe(true);
     if (!late.ok) return;
@@ -140,7 +140,7 @@ describe('buzz race', () => {
 
   it('drops a disconnected player from the buzz pool without pausing', () => {
     const { engine, seats } = startedGame(19, 4);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     expect(engine.disconnect(seats[2]!.id)).toEqual({ ok: true });
     expect(engine.room.phase).toBe('ARMED'); // non-host drop does not pause
     expect(engine.canBuzz(seats[2]!.id)).toBe(false);
@@ -152,7 +152,7 @@ describe('buzz race', () => {
     // buzzer AND, as host, ineligible. eligibleBuzzers() empties and the
     // question must resolve itself rather than sit in ARMED forever.
     const { engine, seats, bank } = startedGame(20, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     expect(engine.room.phase).toBe('ARMED');
     expect(engine.disconnect(seats[0]!.id)).toEqual({ ok: true });
 
@@ -162,7 +162,7 @@ describe('buzz race', () => {
     expect(engine.room.active!.revealed).toBe(true);
     // and the new host can move the game on
     expect(engine.nextQuestion(seats[1]!.id)).toEqual({ ok: true });
-    expect(engine.room.phase).toBe('SETLIST');
+    expect(engine.room.phase).toBe('ON_DECK');
     checkInvariants(engine, bank);
   });
 });

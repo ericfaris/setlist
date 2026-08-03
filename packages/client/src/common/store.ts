@@ -157,8 +157,14 @@ class GameStore {
     return res.ok;
   }
 
-  // ---- setlist / play ----
-  /** Arm the buzzers on the song the host has just played out loud. */
+  // ---- rounds / play ----
+  /** Host picks this round's categories: ROUND_SETUP -> ON_DECK. */
+  async pickCategories(categoryIds: string[]): Promise<boolean> {
+    const res = await this.emit('round:pickCategories', { categoryIds });
+    if (!res.ok) this.patch({ error: res.error });
+    return res.ok;
+  }
+  /** Arm the buzzers on the on-deck song, which the host has just played. */
   async startSong(songId: string): Promise<boolean> {
     const res = await this.emit('setlist:start', { songId });
     if (!res.ok) this.patch({ error: res.error });

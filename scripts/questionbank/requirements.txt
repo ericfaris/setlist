@@ -1,3 +1,2 @@
 ytmusicapi>=1.7,<2
-anthropic>=0.40,<1
 requests>=2.28,<3

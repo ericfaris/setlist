@@ -98,8 +98,12 @@ export default function App() {
     content = <RevealTV pub={g.pub} />;
   } else if (g.pub.phase === 'ARMED' || g.pub.phase === 'LOCKED') {
     content = <ArmedTV pub={g.pub} />;
+  } else if (g.pub.phase === 'ROUND_SETUP') {
+    content = <RoundSetupTV pub={g.pub} />;
+  } else if (g.pub.phase === 'ON_DECK') {
+    content = <OnDeckTV pub={g.pub} />;
   } else {
-    content = <SetlistTV pub={g.pub} />;
+    content = null;
   }
 
   return (
@@ -177,18 +181,35 @@ function playOneShot(src: string): void {
   new Audio(src).play().catch(() => undefined);
 }
 
-function SetlistTV({ pub }: { pub: PublicRoom }) {
+function RoundSetupTV({ pub }: { pub: PublicRoom }) {
   const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
-
+  // How many categories this round needs is host-only (PrivateState). The TV
+  // deliberately does not invent a public field for it.
   return (
     <div className="tv">
-      <div className="brand">SETLIST</div>
+      <div className="brand">ROUND {pub.round?.number ?? 1}</div>
       <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
-        <div className="huge">🎧</div>
-        <div className="sub">{hostName} is choosing a song…</div>
-        <div className="muted" style={{ fontSize: '1.6vw' }}>
-          {pub.songsRemaining} of {pub.songsTotal} songs left
-        </div>
+        <div className="huge">🎛</div>
+        <div className="sub">{hostName} is picking this round&rsquo;s categories…</div>
+      </div>
+      <Scores pub={pub} />
+    </div>
+  );
+}
+
+/** The money screen. Reads `pub` and nothing else: the only song-related thing
+ *  that exists on this surface is the category name. */
+function OnDeckTV({ pub }: { pub: PublicRoom }) {
+  const onDeck = pub.onDeck;
+  return (
+    <div className="tv">
+      <div className="brand">
+        ROUND {onDeck?.roundNumber ?? pub.round?.number ?? 1} · {onDeck?.indexInRound ?? 1} of{' '}
+        {onDeck?.songsInRound ?? 0}
+      </div>
+      <div className="stack center-text" style={{ flex: 1, justifyContent: 'center' }}>
+        <div className="sub">Next up</div>
+        <div className="huge">{onDeck?.categoryTitle ?? '—'}</div>
       </div>
       <Scores pub={pub} />
     </div>

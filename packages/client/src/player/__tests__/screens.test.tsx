@@ -1,6 +1,6 @@
-// The buzz button, the setlist browser and the host judging panel are the
-// screens where a UI bug is a game bug: buzzing when you shouldn't be able to,
-// or a non-host seeing the songs.
+// The buzz button, the round picker, the on-deck preview and the host judging
+// panel are the screens where a UI bug is a game bug: buzzing when you
+// shouldn't be able to, or a non-host seeing the songs.
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -15,11 +15,19 @@ vi.mock('socket.io-client', () => ({
   }),
 }));
 
-const { BuzzScreen, SetlistScreen, HostJudge, Reveal, Lobby } = await import('../screens.js');
-const { store } = await import('../../common/store.js');
-const { makePub, makePriv, makeActive, makePlayer, makeHostSetlist } = await import(
-  '../../test/fixtures.js'
+const { BuzzScreen, RoundSetupScreen, OnDeckScreen, HostJudge, Reveal, Lobby } = await import(
+  '../screens.js'
 );
+const { store } = await import('../../common/store.js');
+const {
+  makePub,
+  makePriv,
+  makeActive,
+  makePlayer,
+  makeCategoryPicker,
+  makeOnDeck,
+  makeHostOnDeck,
+} = await import('../../test/fixtures.js');
 
 describe('BuzzScreen', () => {
   it('is armed and dispatches a buzz on pointer down', () => {
@@ -122,57 +130,126 @@ describe('BuzzScreen', () => {
   });
 });
 
-describe('SetlistScreen', () => {
-  const setlistPub = () => makePub({ phase: 'SETLIST', active: null });
-  const hostPriv = () =>
-    makePriv({ playerId: 'p1', isHost: true, canBuzz: false, setlist: makeHostSetlist() });
+describe('RoundSetupScreen', () => {
+  const setupPub = () => makePub({ phase: 'ROUND_SETUP', active: null });
+  const hostPriv = (picker = makeCategoryPicker()) =>
+    makePriv({ playerId: 'p1', isHost: true, canBuzz: false, categoryPicker: picker });
 
-  it('shows the host section headers and tappable song rows', () => {
-    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
-    expect(screen.getByText(/Category 0 · 3 left/)).toBeInTheDocument();
-    expect(screen.getByText(/Category 1 · 3 left/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Song 0-0/ })).toBeInTheDocument();
-    expect(screen.getByText('Artist 0-1')).toBeInTheDocument();
+  it('shows the round, the required count and the grouped categories', () => {
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    expect(screen.getByText('Round 1 · pick 2 categories')).toBeInTheDocument();
+    expect(screen.getByText('0 / 2 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Genres · 3/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Rock sub-genres · 3/ })).toBeInTheDocument();
+    // the first group is open by default
+    expect(screen.getByRole('button', { name: /Pop/ })).toBeInTheDocument();
+    expect(screen.getByText('40 songs')).toBeInTheDocument();
   });
 
-  it('arms the round immediately when a song is tapped — no separate confirm step', () => {
-    const spy = vi.spyOn(store, 'startSong').mockResolvedValue(true);
-    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
-    fireEvent.click(screen.getByRole('button', { name: /Song 0-1/ }));
-    expect(spy).toHaveBeenCalledWith('s0q1');
-    // no "Start round" button ever exists — tapping the row is the whole action
-    expect(screen.queryByRole('button', { name: /Start round/ })).not.toBeInTheDocument();
+  it('labels a short category "only N left" and disables an exhausted one', () => {
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    expect(screen.getByText('only 2 left')).toBeInTheDocument();
+    expect(screen.getByText('all played')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Country/ })).toBeDisabled();
+  });
+
+  it('selects up to the required count and refuses more', () => {
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Pop/ }));
+    expect(screen.getByText('1 / 2 selected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Rock/ }));
+    expect(screen.getByText('2 / 2 selected')).toBeInTheDocument();
+    // a third is refused client-side
+    fireEvent.click(screen.getByRole('button', { name: /Genres · 3/ })); // no-op group toggle
+    expect(screen.getByText('2 / 2 selected')).toBeInTheDocument();
+  });
+
+  it('only enables Start round at exactly the required count, then emits the ids', () => {
+    const spy = vi.spyOn(store, 'pickCategories').mockResolvedValue(true);
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    expect(screen.getByRole('button', { name: 'Pick 2 more' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /Pop/ }));
+    expect(screen.getByRole('button', { name: 'Pick 1 more' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /^Rock/ }));
+    const start = screen.getByRole('button', { name: 'Start round 1' });
+    expect(start).toBeEnabled();
+    fireEvent.click(start);
+    expect(spy).toHaveBeenCalledWith(['cat_tax_genre__pop', 'cat_tax_genre__rock']);
     spy.mockRestore();
   });
 
-  it('filters rows by the search box', () => {
-    render(<SetlistScreen pub={setlistPub()} priv={hostPriv()} />);
-    fireEvent.change(screen.getByPlaceholderText('Search songs or artists'), {
-      target: { value: 'song 1-2' },
-    });
-    expect(screen.getByRole('button', { name: /Song 1-2/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Song 0-0/ })).not.toBeInTheDocument();
-    expect(screen.queryByText(/Category 0 ·/)).not.toBeInTheDocument();
+  it('deselects via the chip', () => {
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Pop/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Pop ✕' }));
+    expect(screen.getByText('0 / 2 selected')).toBeInTheDocument();
   });
 
-  it('shows a non-host who is choosing, with NO song titles anywhere in the DOM', () => {
-    const { container } = render(<SetlistScreen pub={setlistPub()} priv={makePriv()} />);
-    expect(screen.getByText('🎧 Eric is choosing a song…')).toBeInTheDocument();
+  it('filters categories across every group by the search box', () => {
+    render(<RoundSetupScreen pub={setupPub()} priv={hostPriv()} />);
+    fireEvent.change(screen.getByPlaceholderText('Search categories'), {
+      target: { value: 'grunge' },
+    });
+    expect(screen.getByRole('button', { name: /90s Grunge/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Pop/ })).not.toBeInTheDocument();
+  });
+
+  it('shows a non-host who is picking, with NO category list', () => {
+    const { container } = render(<RoundSetupScreen pub={setupPub()} priv={makePriv()} />);
+    expect(screen.getByText(/Eric is picking this round/)).toBeInTheDocument();
     const html = container.innerHTML;
-    for (const section of makeHostSetlist()) {
-      for (const song of section.songs) {
-        expect(html).not.toContain(song.title);
-        expect(html).not.toContain(song.artist);
-        expect(html).not.toContain(song.videoId);
-      }
+    for (const group of makeCategoryPicker().groups) {
+      for (const cat of group.categories) expect(html).not.toContain(cat.title);
     }
   });
+});
 
-  it('does not crash when the host projection has no setlist yet', () => {
+describe('OnDeckScreen', () => {
+  const deckPub = () =>
+    makePub({ phase: 'ON_DECK', active: null, onDeck: makeOnDeck({ categoryTitle: '90s Grunge' }) });
+
+  it('shows everyone the category and the position in the round', () => {
+    render(<OnDeckScreen pub={deckPub()} priv={makePriv()} />);
+    expect(screen.getByText('Next up')).toBeInTheDocument();
+    expect(screen.getByText('90s Grunge')).toBeInTheDocument();
+    expect(screen.getByText(/Round 1 · song 3 of 10/)).toBeInTheDocument();
+  });
+
+  it('shows a non-host the category and NOTHING about the song', () => {
+    const { container } = render(<OnDeckScreen pub={deckPub()} priv={makePriv()} />);
+    const html = container.innerHTML;
+    expect(html).toContain('90s Grunge');
+    const song = makeHostOnDeck();
+    expect(html).not.toContain(song.title);
+    expect(html).not.toContain(song.artist);
+    expect(html).not.toContain(song.videoId);
+    expect(screen.queryByRole('link', { name: /YouTube Music/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /arm buzzers/ })).not.toBeInTheDocument();
+  });
+
+  it('gives the host the song, a YouTube Music link and the arm button', () => {
+    const spy = vi.spyOn(store, 'startSong').mockResolvedValue(true);
     render(
-      <SetlistScreen pub={setlistPub()} priv={makePriv({ playerId: 'p1', isHost: true })} />,
+      <OnDeckScreen
+        pub={deckPub()}
+        priv={makePriv({
+          playerId: 'p1',
+          isHost: true,
+          canBuzz: false,
+          hostOnDeck: makeHostOnDeck(),
+        })}
+      />,
     );
-    expect(screen.getByText('Loading setlist…')).toBeInTheDocument();
+    expect(screen.getByText('Song 0-2')).toBeInTheDocument();
+    expect(screen.getByText('Artist 0-2')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /Open in YouTube Music/ });
+    expect(link).toHaveAttribute('href', 'https://music.youtube.com/watch?v=vid02xxxxxx');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+
+    fireEvent.click(screen.getByRole('button', { name: /arm buzzers/ }));
+    expect(spy).toHaveBeenCalledWith('s0q2');
+    spy.mockRestore();
   });
 });
 

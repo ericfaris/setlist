@@ -31,9 +31,11 @@ Two things are never sent to a client that shouldn't see them:
 
 - the **answer** (song title + artist) — the host's own socket only, until the
   reveal;
-- the **setlist's song data** (titles, artists, video ids) — the host's own
-  socket only, and only while they're browsing. The host has to pick and play
-  the songs, so they legitimately know them; nobody else may.
+- the **catalog's song data** (titles, artists, video ids) — the host's own
+  socket only, and only for the single song the server has put on deck. The host
+  has to play it, so they legitimately know it; nobody else may. The upcoming
+  song's **category name** *is* public — that is the on-deck preview, and it is
+  the only song-adjacent thing the TV or a guest ever sees before the reveal.
 
 The Chromecast receiver is a read-only WebSocket client rendering a TV view. It
 plays no media and is now the **least privileged surface in the system** — its
@@ -60,19 +62,33 @@ YouTube Music credentials at all.
 
 ## How the game works
 
-- **Setlist** — every bank category becomes a **section**, every song a row, in
-  bank order (no shuffle — the host is deliberately browsing). The host's phone
-  shows section headers with a remaining count, a search box that filters across
-  titles and artists, and dims songs already played (`✓ played`) so nothing gets
-  picked twice. Songs are deduped by video id while flattening, so a track the AI
-  categoriser put in two themes only appears once.
-- **Host playback** — tap a song → see its title, artist and section, plus
-  **▶ Open in YouTube Music** (a native `music.youtube.com/watch?v=…` link, which
-  has no embed restrictions). Play it however you like, then tap
-  **🔔 Start round — arm buzzers**. Tapping a song is purely local to the host's
-  browser; the server learns nothing until Start, so buzzing can never be live
-  merely because a song was tapped. There is **no timer of any kind** — the host
-  reveals manually when they decide the round is over.
+- **Rounds** — after the lobby, play runs as **3 fixed rounds**. At the start of
+  each round the host picks **5 / 4 / 3 categories** (round 1 / 2 / 3) from a
+  grouped, searchable picker on their phone. The server then samples **up to 5
+  not-yet-used songs** from each picked category and sequences them
+  **round-robin by category** — A B C D E A B C D E … — fully automatically.
+  Nobody browses a song list; there is no way for anyone to choose an individual
+  song. After round 3's last song is revealed and the host advances, the game
+  ends at **GAME_OVER** on its own.
+- **Used songs** — a song is marked used the moment it is *drawn* into a round,
+  not when it is played, so a category re-picked in a later round can never
+  repeat an earlier song. Because the curated taxonomy legitimately puts one
+  track in several categories (Rock **and** 90s Rock **and** 90s Grunge), the
+  catalog dedupes by video id only *within* a category, and marking a song used
+  marks every catalog entry sharing that video id. A category with fewer than 5
+  unused songs contributes what it has left (the picker labels it `only N left`);
+  one with none is shown disabled (`all played`).
+- **Category preview** — before every song, the upcoming **category name** is
+  shown to everyone, on the phones and on the TV ("Next up: 90s Grunge"), along
+  with `Round n · song i of N`. That is the only new public information: the
+  song's title, artist and video id stay host-only, exactly as before.
+- **Host playback** — on the on-deck screen the host — and only the host — sees
+  the song's title, artist and **▶ Open in YouTube Music** (a native
+  `music.youtube.com/watch?v=…` link, which has no embed restrictions). Play it
+  however you like, then tap **🔔 Start round — arm buzzers**. The server has
+  already chosen the song, so the host's only decision is *when* to arm. There is
+  **no timer of any kind** — the host reveals manually when they decide the round
+  is over.
 - **Buzz** — first message the server processes wins the lock, full stop.
   Everyone else's button shows "🔒 *name* buzzed in".
 - **Scoring** — a flat **100 points** per song: correct title = **+50**, correct
@@ -83,15 +99,14 @@ YouTube Music credentials at all.
   revealed automatically.
 - **Host** — the first player to join a room is the host (normally whoever set
   the TV up). The host **never buzzes** — they picked and played the song, so
-  they're the facilitator and judge, not a contestant. They browse the setlist,
-  arm rounds, judge answers, reveal, advance, and can end the game at any time
-  with **🏁 End game & show scores** (with a 36–64-song bank, "all songs used" is
-  effectively unreachable). The crown can be handed to anyone with **Make host**
-  in the lobby and moves automatically if the host disconnects, preferring a
-  device that can cast — but note that whoever holds it becomes a permanent
-  non-player for as long as they hold it, and anyone who has ever held it has
-  seen the whole setlist. Don't rotate the host mid-game unless you're happy with
-  both. There's exactly one host at a time, and a game needs at least **2
+  they're the facilitator and judge, not a contestant. They pick each round's
+  categories, arm songs, judge answers, reveal, advance, and can end the game at
+  any time with **🏁 End game & show scores**. The crown can be handed to anyone
+  with **Make host** in the lobby and moves automatically if the host
+  disconnects, preferring a device that can cast — but note that whoever holds it
+  becomes a permanent non-player for as long as they hold it, and anyone who has
+  ever held it has seen the answers to the songs armed while they held it. Don't
+  rotate the host mid-game unless you're happy with both. There's exactly one host at a time, and a game needs at least **2
   players**.
 
 ## Question bank
@@ -155,41 +170,97 @@ scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py --dry-r
 scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py
 ```
 
-Useful flags: `--playlists` (repeatable; a playlist id or a case-insensitive
-title substring, default: all of them), `--max-categories` (8),
-`--songs-per-category` (8), `--min-songs` (5), `--seed`, `--out`,
-`--auth-mode {oauth,browser}`, `--auth-file`.
+This runs the default **taxonomy** mode (see below) and takes **tens of
+minutes** — it prints per-category progress and an elapsed time at the end.
 
 Songs with no `videoId`, no title or no artist are skipped, as are unavailable
-tracks; a video id appearing in two playlists is kept only once, so no two
-setlist rows share an answer. Playlists with too few usable songs are dropped with a
-warning.
+tracks, and anything YT Music flags `isExplicit` is dropped outright. A video id
+appearing in two playlists of the *same* category is kept once; the same track
+appearing in two *different* categories is kept in both, deliberately — the
+engine's per-game "used" tracking is what stops it playing twice.
 
 Output goes to `question-bank/bank.json` (gitignored — it's your data). The
 server reads `QUESTION_BANK_PATH` and falls back to the bundled sample bank,
 logging a warning, if the file is missing or invalid.
 
-### Community playlists and AI categories
+### Curated category taxonomy
 
-Pull songs from playlists you don't own, and let Claude invent the setlist
-sections instead of using one category per playlist.
+The builder's default mode (`--mode taxonomy`) ignores your library entirely and
+builds a fixed, **config-driven** set of ~61 categories from large community
+playlists. No LLM is involved: the category names and their search queries live
+in editable tables at the top of `build_bank.py`.
+
+| Group | Count | Examples |
+|---|---|---|
+| `genre` — Genres | 5 | Pop, Rock, Hip-Hop/Rap, R&B/Soul, Country |
+| `decade_pop` / `decade_rock` / `decade_hiphop` / `decade_rnb` / `decade_country` | 37 | 80s Rock, 90s Pop, Today's Country |
+| `rock_sub` — Rock sub-genres | 9 | 90s Grunge, Yacht Rock, Garage Rock |
+| `era` — Hits by era | 7 | 50s & 60s Oldies, 80s Throwbacks, 2010s Chart Toppers |
+| `special` — Special | 3 | Boy Bands/Girl Groups, Solo Artists, One-Hit Wonders |
+
+Each category issues several community-playlist searches in priority order
+(`"best {genre} songs"`, `"{decade} {genre} hits"`, `"{sub} songs"`,
+`"{era} hits"`, …), takes the top `--per-query-results` usable hits from each
+until `--max-playlists-per-category` distinct playlists are collected, fetches
+**every** track of each playlist (no 200-item cap), dedupes by video id within
+the category, and writes hundreds of songs per category.
+
+```bash
+# the taxonomy itself — no network at all
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py --list-categories
+
+# one narrow category end to end (~a minute, real network)
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --category "Yacht Rock" --dry-run
+
+# the full build (tens of minutes) — watch the per-category progress
+time scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py
+
+# a category came in thin: rebuild just that one and merge it back in
+scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
+    --category "Garage Rock" --merge
+```
+
+Flags: `--mode {taxonomy,playlists}` (default `taxonomy`), `--category`
+(repeatable substring filter on key or title), `--list-categories`,
+`--max-playlists-per-category` (4), `--per-query-results` (2),
+`--min-category-songs` (25 — thinner categories are dropped and named in the
+build summary), `--max-songs-per-category` (0 = unlimited), `--sleep-ms` (250,
+between playlist fetches), `--merge` (merge into an existing `--out`, replacing
+same-id categories and keeping the rest).
+
+**Adding or editing a category** is a one- or two-line edit to the tables in
+`build_bank.py` — `PLAIN_GENRES`, `GENRE_DECADES`, `ROCK_SUBGENRES`,
+`ERA_CATEGORIES`, `SPECIAL_CATEGORIES`. The ~61-entry `TAXONOMY` is derived from
+them. A category's `key` and `group` are **identifiers** (they form its bank id);
+change them and you orphan the category in any bank built earlier. `title` is
+free to change. If a category searches badly, paste two playlist ids or share
+URLs into its `playlist_ids` — pinned ids are consumed before any search.
+
+The build prints a per-category table, a **dropped categories** section
+explaining every category that fell below `--min-category-songs`, and the
+wall-clock elapsed. Report the real counts; the builder makes no per-category
+guarantee beyond that threshold.
+
+### Legacy playlist mode
+
+`--mode playlists` keeps the original behaviour: one bank category per source
+playlist, drawn from your own library plus any community sources.
 
 ```bash
 # a public playlist by id or pasted share URL (repeatable)
 scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
-    --community-playlist PLxxxxxxxx
-scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
-    --community-playlist "https://music.youtube.com/playlist?list=PLxxxxxxxx"
+    --mode playlists --community-playlist PLxxxxxxxx
 
 # search YT Music's community playlists and take the top match (repeatable)
 scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
-    --community-search "80s power ballads"
-
-# your library PLUS community sources, several decades, 8 AI categories
-scripts/questionbank/.venv/bin/python scripts/questionbank/build_bank.py \
-    --community-search "60s classics" --community-search "70s classic rock" \
-    --categories 8 --max-categories 15
+    --mode playlists --community-search "80s power ballads"
 ```
+
+Flags for this mode: `--playlists` (repeatable; a playlist id or a
+case-insensitive title substring), `--community-playlist`, `--community-search`,
+`--no-library`, `--max-categories` (8), `--songs-per-category` (8),
+`--min-songs` (5), `--seed`.
 
 `--community-playlist` accepts a bare id (`PLxxxx`, `OLAK5uy_xxxx`, …) or any of
 the usual URL forms: `music.youtube.com/playlist?list=…`,
@@ -202,43 +273,22 @@ relevance order — no extra ranking — and logs which playlist it picked (titl
 author, id, item count) so you can sanity-check it. A search that finds nothing
 logs a warning and the run continues with the other sources.
 
-**Your library is always included alongside any community sources** — the two
-are additive, not either/or. `--playlists` still narrows *which* of your own
-playlists are used; pass `--no-library` if you want to build from community
-sources only, excluding your library entirely.
+**Your library is always included alongside any community sources** in this mode
+— the two are additive, not either/or. Pass `--no-library` to build from
+community sources only.
 
-**AI categories** need `ANTHROPIC_API_KEY`; the model comes from
-`ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`). It's one batch call per
-run, sending only song titles and artists — never video ids — and the AI only
-groups, titles and flags songs `ytmusicapi` already returned. It never invents a
-song. `--categories N` (default 5) sets how many
-categories to ask for; `--max-categories` still caps how many *source playlists*
-are read. The prompt also asks the model to favor **decade diversity** — if
-enough 1960s/1970s songs are in the pool, it's told to carve out a category for
-them rather than letting everything cluster into whichever decades happen to
-dominate your library — so pairing this with `--community-search "60s hits"` /
-`"70s classics"` (or similar) actually surfaces that era instead of it getting
-diluted into a "Classic Rock" catch-all.
-
-**Content filtering** is two-layer. Anything YT Music flags `isExplicit` is
-dropped before the AI ever sees it — that's the authoritative, non-negotiable
-filter. The AI then does a second conservative pass over titles and artists, and
-anything it flags is dropped too.
-
-**Fallback**: no key, no `anthropic` package, an API error, or an unparseable
-reply → the builder prints why and falls back to one category per playlist. It
-never fails the run. `--no-ai` forces that path.
-
-Both env vars are read by the **Python builder only** — the Node server has no
-Anthropic dependency.
+**Content filtering**: anything YT Music flags `isExplicit` is dropped, in both
+modes. That is the whole filter now — there is no second AI pass, because there
+is no AI. The **AI categorisation step has been removed entirely**;
+`ANTHROPIC_API_KEY` and `ANTHROPIC_MODEL` are no longer read by anything in this
+repo.
 
 **Embeddable pre-check (legacy, off by default)**: `--youtube-api-key` runs an
 optional pass that drops songs whose *embedding* is disabled by the rights
 holder. It is **no longer needed** — the game plays songs through native YouTube
 Music links, which have no embed restrictions at all — so it no longer defaults
-to `YOUTUBE_API_KEY` and only runs when you pass the flag explicitly. The code
-and its tests are kept because they're harmless and self-contained. The Node
-server never reads `YOUTUBE_API_KEY`.
+to `YOUTUBE_API_KEY` and only runs when you pass the flag explicitly. It applies
+to `--mode playlists` only. The Node server never reads `YOUTUBE_API_KEY`.
 
 ### Schema
 
@@ -249,9 +299,9 @@ server never reads `YOUTUBE_API_KEY`.
   "source": "ytmusicapi",
   "categories": [
     {
-      "id": "cat_PLxxxxxxxxxxxx",
-      "title": "80s Bangers",
-      "playlistId": "PLxxxxxxxxxxxx",
+      "id": "cat_tax_rock_sub__90s_grunge",
+      "title": "90s Grunge",
+      "playlistId": null,
       "questions": [
         {
           "id": "q_dQw4w9WgXcQ",
@@ -269,11 +319,14 @@ server never reads `YOUTUBE_API_KEY`.
 }
 ```
 
-- `id`s are derived (`cat_<playlistId>`, `q_<videoId>`) so a rebuild doesn't
-  churn them. An AI-generated category is `cat_ai_<slug>_<hash>` instead, from a
-  slug of its title plus a short SHA-1 of it — also derived, also stable.
+- `id`s are derived so a rebuild doesn't churn them. A taxonomy category is
+  `cat_tax_<group>__<key>` straight from its config record; legacy playlist-mode
+  categories are `cat_<playlistId>`; questions are always `q_<videoId>`. The
+  `<group>` half is what the host's picker groups by — any id that isn't a
+  `cat_tax_*` id (a legacy bank, an old `cat_ai_*` bank, the bundled sample)
+  falls into **All categories** and stays fully playable.
 - `playlistId` is the single source playlist a category came from, or `null` for
-  an AI-generated category (which pulls from many playlists at once).
+  a taxonomy category (which aggregates several playlists at once).
 - `value` is **ignored by the engine** — scoring is a flat 100 per song. It
   stays in the file because the builder writes it and the validator still
   requires it; the on-disk format is deliberately unchanged. Don't "fix" the
@@ -293,15 +346,22 @@ scripts/questionbank/.venv/bin/python -m unittest discover -s scripts/questionba
 
 The server suite covers the buzz race (including 50 rooms × 4 simultaneous
 buzzes over real sockets, asserting exactly one winner among the non-hosts each
-time and that the host is always rejected), the flat scoring matrix, setlist
-construction and `used` tracking, phase transitions, the host role and its
-exclusion from buzzing (including the 2-player deadlock case where the host
-drops mid-round), and the spectator-safe rule — asserted after every mutation,
-so a projection that leaked a video id, a setlist title or an early answer would
-fail the build. The client suite covers the buzz button, the setlist browser
-(including an explicit "a non-host sees no song titles at all" test) and the
-host judging panel. The Python tests mock the `YTMusic` client entirely; nothing
-here touches the network.
+time and that the host is always rejected), the flat scoring matrix, catalog
+construction (including the per-category video-id dedupe and its counterpart,
+"marking a drawn song used marks every entry with that video id"), the whole
+round structure — 5/4/3 categories, 5 songs each, round-robin ordering, clamped
+counts on a small bank, no cross-round repeats, automatic `GAME_OVER` after
+round 3 — phase transitions, the host role and its exclusion from buzzing
+(including the 2-player deadlock case where the host drops mid-round), and the
+spectator-safe rule, asserted after every mutation: the whole `PublicRoom` is
+stringified and checked, so a projection that leaked a video id, a song title or
+an early answer would fail the build. The category *name* is public from the
+on-deck preview onwards; nothing else about the song ever is. The client suite
+covers the buzz button, the round-setup picker, the on-deck preview (including
+explicit "a non-host sees no song data at all" tests) and the host judging
+panel. The Python tests cover the taxonomy config, the full-playlist fetch, the
+per-category aggregation and `--merge`, and mock the `YTMusic` client entirely;
+nothing here touches the network.
 
 ## Build & run (production)
 
@@ -333,3 +393,4 @@ the version tag in the UI corner tells you which build is live.
 | `PUBLIC_BASE_URL` | `http://localhost:5173` | Base URL used to build the QR join link shown on the TV. |
 | `QUESTION_BANK_PATH` | `question-bank/bank.json` | Bank file, relative to the repo root. Falls back to the bundled sample. |
 | `YOUTUBE_API_KEY` | *(empty)* | **Builder only, optional.** Legacy embeddable pre-check, and only when `--youtube-api-key` is passed explicitly. The Node server never reads it. |
+| `ANTHROPIC_API_KEY` | *(empty)* | **Unused.** The AI categorisation step was removed with the curated taxonomy. Nothing in this repo reads it; it is left in `.env`/`.env.example` only because removing it isn't worth a deploy. |

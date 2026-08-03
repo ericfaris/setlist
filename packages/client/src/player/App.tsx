@@ -3,7 +3,15 @@ import { useGame } from '../common/useGame.js';
 import { store } from '../common/store.js';
 import { initCast, isCastSupported, type CastController } from '../common/cast.js';
 import { useWakeLock } from '../common/useWakeLock.js';
-import { BuzzScreen, GameOver, Lobby, Paused, Reveal, SetlistScreen } from './screens.js';
+import {
+  BuzzScreen,
+  GameOver,
+  Lobby,
+  OnDeckScreen,
+  Paused,
+  Reveal,
+  RoundSetupScreen,
+} from './screens.js';
 
 type View = 'landing' | 'host' | 'join';
 
@@ -312,7 +320,8 @@ function InGame() {
       {g.error && <ErrorBanner message={g.error} />}
       <TvStatusStrip pub={pub} isHost={isHost} />
       {pub.phase === 'LOBBY' && <Lobby pub={pub} priv={priv} />}
-      {pub.phase === 'SETLIST' && <SetlistScreen pub={pub} priv={priv} />}
+      {pub.phase === 'ROUND_SETUP' && <RoundSetupScreen pub={pub} priv={priv} />}
+      {pub.phase === 'ON_DECK' && <OnDeckScreen pub={pub} priv={priv} />}
       {(pub.phase === 'ARMED' || pub.phase === 'LOCKED') && <BuzzScreen pub={pub} priv={priv} />}
       {pub.phase === 'REVEAL' && <Reveal pub={pub} priv={priv} />}
       {pub.phase === 'GAME_OVER' && <GameOver pub={pub} priv={priv} />}

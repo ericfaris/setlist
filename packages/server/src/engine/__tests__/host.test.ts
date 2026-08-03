@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   addPlayers,
   checkInvariants,
-  firstUnusedSongId,
+  armNext,
   makeEngine,
+  onDeckSongId,
+  pickRound,
   resetInvariantMemory,
+  selectableCategoryIds,
   startedGame,
 } from './harness.js';
 
@@ -22,8 +25,12 @@ describe('host role', () => {
   it('gates every privileged method behind the host', () => {
     const { engine, seats, bank } = startedGame(401, 3);
     const notHost = seats[1]!.id;
+    const pickerIds = selectableCategoryIds(engine).slice(
+      0,
+      engine.requiredCategoryCount(1),
+    );
     const calls: Array<[string, () => { ok: boolean; error?: string }]> = [
-      ['startSong', () => engine.startSong(notHost, firstUnusedSongId(engine))],
+      ['pickCategories', () => engine.pickCategories(notHost, pickerIds)],
       ['transferHost', () => engine.transferHost(notHost, seats[2]!.id)],
       ['revealQuestion', () => engine.revealQuestion(notHost)],
       ['nextQuestion', () => engine.nextQuestion(notHost)],
@@ -37,8 +44,14 @@ describe('host role', () => {
       expect(res.ok, name).toBe(false);
       expect(res.error, name).toMatch(/Only the host/);
     }
+    // startSong needs a song on deck to reach anything but the host check
+    pickRound(engine, seats[0]!.id);
+    expect(engine.startSong(notHost, onDeckSongId(engine))).toEqual({
+      ok: false,
+      error: 'Only the host can start a song.',
+    });
     // judge is host-gated too, but needs a lock to reach the check
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.buzz(seats[1]!.id);
     const judged = engine.judge(notHost, { titleCorrect: true, artistCorrect: true });
     expect(judged).toEqual({ ok: false, error: 'Only the host can judge an answer.' });
@@ -99,7 +112,7 @@ describe('host role', () => {
 
   it('pauses the game when the host drops mid-question and nobody can take over', () => {
     const { engine, seats } = startedGame(406, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     // The guest leaving empties the buzz pool (the host never buzzes), so the
     // round auto-reveals first; then the host drops with nobody to inherit.
     engine.disconnect(seats[1]!.id);
@@ -116,7 +129,7 @@ describe('host role', () => {
 
   it('does not pause when the host drops but a successor is connected', () => {
     const { engine, seats } = startedGame(407, 3);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.disconnect(seats[0]!.id);
     expect(engine.room.phase).toBe('ARMED');
     expect(engine.room.players.find((p) => p.isHost)!.connected).toBe(true);
@@ -125,7 +138,7 @@ describe('host role', () => {
 
   it('a reconnecting player keeps their seat, score and name', () => {
     const { engine, seats } = startedGame(408, 2);
-    engine.startSong(seats[0]!.id, firstUnusedSongId(engine));
+    armNext(engine, seats[0]!.id);
     engine.buzz(seats[1]!.id);
     engine.judge(seats[0]!.id, { titleCorrect: true, artistCorrect: true });
     engine.disconnect(seats[1]!.id);

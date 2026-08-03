@@ -88,105 +88,204 @@ export function Lobby({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   );
 }
 
-// ---------------------------------------------------------------- Setlist
+// ---------------------------------------------------------------- Round setup
 /**
- * The host browses the setlist and taps a song. Tapping is deliberately pure
- * CLIENT state — the server learns nothing until "Start round", which is what
- * makes "buzzing is never live merely from having tapped a song" structurally
- * true rather than merely enforced.
+ * The host picks this round's categories. Grouping is decided SERVER-side (one
+ * implementation, covered by the engine tests); this only renders it. Selection
+ * is pure CLIENT state until "Start round" — the server learns nothing before
+ * that, which is what keeps a half-made choice from moving the game on.
  */
-export function SetlistScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
-  const self = me(pub, priv);
-  const isHost = !!self?.isHost;
+export function RoundSetupScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
   const hostName = nameOf(pub, pub.players.find((p) => p.isHost)?.id ?? null);
+  const picker = priv.categoryPicker;
+  const [selected, setSelected] = useState<string[]>([]);
   const [query, setQuery] = useState('');
-  // Tapping a song arms it immediately (one step, not cue-then-confirm) — this
-  // just tracks which row is mid-flight so a fast double-tap can't race two
-  // starts, and surfaces a failure (e.g. someone already played it) inline.
-  const [arming, setArming] = useState<string | null>(null);
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const [starting, setStarting] = useState(false);
 
-  const sections = priv.setlist;
-  const filtered = useMemo(() => {
-    if (!sections) return [];
+  const searching = query.trim().length > 0;
+  const groups = useMemo(() => {
+    if (!picker) return [];
     const q = query.trim().toLowerCase();
-    if (!q) return sections;
-    return sections
-      .map((sec) => ({
-        ...sec,
-        songs: sec.songs.filter(
-          (song) =>
-            song.title.toLowerCase().includes(q) || song.artist.toLowerCase().includes(q),
-        ),
-      }))
-      .filter((sec) => sec.songs.length > 0);
-  }, [sections, query]);
+    if (!q) return picker.groups;
+    return picker.groups
+      .map((g) => ({ ...g, categories: g.categories.filter((c) => c.title.toLowerCase().includes(q)) }))
+      .filter((g) => g.categories.length > 0);
+  }, [picker, query]);
 
-  // Non-host (and the TV's own idea of it): never render a single song title.
-  if (!isHost) {
+  // Non-host players (and the TV's own idea of it) see no category list at all.
+  if (!picker) {
     return (
       <div className="stack">
-        <div className="card center-text">🎧 {hostName} is choosing a song…</div>
+        <div className="card center-text">
+          🎛 Round {pub.round?.number ?? 1} — {hostName} is picking this round&rsquo;s categories…
+        </div>
         <ScoreStrip pub={pub} priv={priv} />
       </div>
     );
   }
 
-  if (!sections) {
-    return (
-      <div className="stack">
-        <div className="card center-text muted">Loading setlist…</div>
-        <ScoreStrip pub={pub} priv={priv} />
-      </div>
-    );
-  }
+  const required = picker.required;
+  const complete = selected.length === required;
+  const titleOf = (id: string) =>
+    picker.groups.flatMap((g) => g.categories).find((c) => c.id === id)?.title ?? id;
+
+  const toggle = (id: string) => {
+    setSelected((cur) => {
+      if (cur.includes(id)) return cur.filter((x) => x !== id);
+      if (cur.length >= required) return cur; // refused client-side
+      return [...cur, id];
+    });
+  };
+
+  // Sections start collapsed except the first with a match; a live search
+  // expands everything so a hit is never hidden behind a closed section.
+  const firstSlug = groups[0]?.slug;
+  const isOpen = (slug: string) => searching || openGroups.has(slug) || slug === firstSlug;
+  const toggleGroup = (slug: string) =>
+    setOpenGroups((cur) => {
+      const next = new Set(cur);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      // the default-open first section needs an explicit entry to be closable
+      if (slug === firstSlug && !cur.has(slug)) next.delete(slug);
+      return next;
+    });
 
   return (
     <div className="stack">
       <div className="card stack">
-        <div className="h2">Pick a song</div>
+        <div className="spread">
+          <div className="h2">
+            Round {picker.roundNumber} · pick {required} categories
+          </div>
+          <div className="pill">
+            {selected.length} / {required} selected
+          </div>
+        </div>
+        <div className="small muted">
+          {picker.perCategory} songs from each, chosen at random.
+        </div>
+        {selected.length > 0 && (
+          <div className="chiprow">
+            {selected.map((id) => (
+              <button key={id} className="chip" onClick={() => toggle(id)}>
+                {titleOf(id)} ✕
+              </button>
+            ))}
+          </div>
+        )}
         <input
           value={query}
-          placeholder="Search songs or artists"
+          placeholder="Search categories"
           onChange={(e) => setQuery(e.target.value)}
         />
         <div className="setlist">
-          {filtered.map((sec) => (
-            <div key={sec.title} className="stack" style={{ gap: 4 }}>
-              <div className="sechead">
-                {sec.title} · {sec.songs.filter((song) => !song.used).length} left
-              </div>
-              {sec.songs.map((song) =>
-                song.used ? (
-                  <div key={song.id} className="song used">
-                    <b>{song.title}</b>
-                    <div className="muted small">
-                      {song.artist} · ✓ played
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    key={song.id}
-                    className="song"
-                    disabled={arming === song.id}
-                    onClick={() => {
-                      setArming(song.id);
-                      void store.startSong(song.id).finally(() => setArming(null));
-                    }}
-                  >
-                    <b>{song.title}</b>
-                    <div className="muted small">
-                      {arming === song.id ? 'Arming…' : song.artist}
-                    </div>
-                  </button>
-                ),
-              )}
+          {groups.map((group) => (
+            <div key={group.slug} className="stack" style={{ gap: 4 }}>
+              <button className="sechead" onClick={() => toggleGroup(group.slug)}>
+                {isOpen(group.slug) ? '▾' : '▸'} {group.label} · {group.categories.length}
+              </button>
+              {isOpen(group.slug) &&
+                group.categories.map((cat) => {
+                  const picked = selected.includes(cat.id);
+                  const exhausted = cat.available === 0;
+                  const short = cat.available > 0 && cat.available < picker.perCategory;
+                  return (
+                    <button
+                      key={cat.id}
+                      className={`song${exhausted ? ' used' : ''}${picked ? ' picked' : ''}`}
+                      disabled={exhausted}
+                      onClick={() => toggle(cat.id)}
+                    >
+                      <b>
+                        {picked ? '✓ ' : ''}
+                        {cat.title}
+                      </b>
+                      <div className="muted small">
+                        {exhausted
+                          ? 'all played'
+                          : short
+                            ? `only ${cat.available} left`
+                            : `${cat.available} songs`}
+                      </div>
+                    </button>
+                  );
+                })}
             </div>
           ))}
         </div>
+        <button
+          className="primary"
+          disabled={!complete || starting}
+          onClick={() => {
+            setStarting(true);
+            void store.pickCategories(selected).finally(() => setStarting(false));
+          }}
+        >
+          {complete ? `Start round ${picker.roundNumber}` : `Pick ${required - selected.length} more`}
+        </button>
         <button className="ghost small" onClick={() => store.forceEnd()}>
           🏁 End game &amp; show scores
         </button>
       </div>
+      <ScoreStrip pub={pub} priv={priv} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- On deck
+/**
+ * The next song, chosen by the server. Its CATEGORY is public — everyone sees
+ * it, on the phone and the TV. Its title/artist/videoId reach the host's own
+ * socket only, via `priv.hostOnDeck`, because the host has to play it.
+ */
+export function OnDeckScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState }) {
+  const self = me(pub, priv);
+  const isHost = !!self?.isHost;
+  const onDeck = pub.onDeck;
+  const song = priv.hostOnDeck;
+  const [arming, setArming] = useState(false);
+
+  return (
+    <div className="stack">
+      <div className="card stack center-text">
+        <div className="small muted">
+          Round {onDeck?.roundNumber ?? pub.round?.number ?? 1} · song{' '}
+          {onDeck?.indexInRound ?? 1} of {onDeck?.songsInRound ?? 0}
+        </div>
+        <div className="small muted">Next up</div>
+        <div className="title">{onDeck?.categoryTitle ?? '—'}</div>
+      </div>
+
+      {isHost && song && (
+        <div className="card stack" style={{ gap: 4 }}>
+          <div className="small muted">Play this one</div>
+          <div>
+            <b>{song.title}</b>
+          </div>
+          <div className="muted">{song.artist}</div>
+          <a
+            className="primary"
+            href={youtubeMusicUrl(song.videoId)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            ▶ Open in YouTube Music
+          </a>
+          <button
+            className="primary"
+            disabled={arming}
+            onClick={() => {
+              setArming(true);
+              void store.startSong(song.songId).finally(() => setArming(false));
+            }}
+          >
+            {arming ? 'Arming…' : '🔔 Start round — arm buzzers'}
+          </button>
+        </div>
+      )}
+
       <ScoreStrip pub={pub} priv={priv} />
     </div>
   );

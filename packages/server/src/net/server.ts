@@ -167,7 +167,10 @@ export function attachSocketServer(
       acked(ack, (rt, hostId) => rt.engine.transferHost(hostId, playerId));
     });
 
-    // ---- Setlist / play ----
+    // ---- Rounds / play ----
+    socket.on('round:pickCategories', ({ categoryIds }, ack) => {
+      acked(ack, (rt, hostId) => rt.engine.pickCategories(hostId, categoryIds));
+    });
     socket.on('setlist:start', ({ songId }, ack) => {
       acked(ack, (rt, hostId) => rt.engine.startSong(hostId, songId));
     });

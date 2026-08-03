@@ -2,7 +2,11 @@
 // games, plus an invariant checker (including the spectator-safe leak check)
 // meant to be run after every mutation.
 import { expect } from 'vitest';
-import { SONG_POINT_VALUE, type JudgeVerdict, type QuestionBank } from '@setlist/shared';
+import {
+  SONG_POINT_VALUE,
+  type JudgeVerdict,
+  type QuestionBank,
+} from '@setlist/shared';
 import { GameEngine } from '../engine.js';
 import { makeRng } from '../rng.js';
 import { sampleQuestionBank } from '../../questions/bank.js';
@@ -49,7 +53,12 @@ export function addPlayers(engine: GameEngine, n: number, canCast = true): Seat[
   return seats;
 }
 
-/** Build a bank with `categories` categories of `perCategory` questions each. */
+/**
+ * Build a bank with `categories` categories of `perCategory` questions each.
+ * Ids are taxonomy-style (`cat_tax_genre__c<N>`) so the picker projection is
+ * exercised on a real group rather than only the 'other' fallback. The sample
+ * bank covers the fallback.
+ */
 export function makeBank(categories: number, perCategory: number | number[]): QuestionBank {
   const counts =
     typeof perCategory === 'number' ? Array(categories).fill(perCategory) : perCategory;
@@ -58,7 +67,7 @@ export function makeBank(categories: number, perCategory: number | number[]): Qu
     generatedAt: '2026-01-01T00:00:00Z',
     source: 'fixture',
     categories: Array.from({ length: categories }, (_, c) => ({
-      id: `cat_${c}`,
+      id: `cat_tax_genre__c${c}`,
       title: `Category ${c}`,
       playlistId: `PL${c}`,
       questions: Array.from({ length: counts[c] ?? 0 }, (_, q) => ({
@@ -75,24 +84,61 @@ export function makeBank(categories: number, perCategory: number | number[]): Qu
   };
 }
 
-/** The id of the first song nobody has played yet. */
-export function firstUnusedSongId(engine: GameEngine): string {
-  const song = engine.room.setlist?.songs.find((s) => !s.used);
-  if (!song) throw new Error('no unused songs left');
+/** The id of the song the server has queued up next. */
+export function onDeckSongId(engine: GameEngine): string {
+  const song = engine.onDeckSong();
+  if (!song) throw new Error('no song on deck');
   return song.id;
 }
 
+/** The category ids the host may still pick, in catalog order. */
+export function selectableCategoryIds(engine: GameEngine): string[] {
+  const unused = engine.unusedByCategory();
+  return (engine.room.setlist?.sections ?? [])
+    .filter((sec) => (unused.get(sec.index) ?? 0) > 0)
+    .map((sec) => sec.id);
+}
+
+/**
+ * Pick this round's categories: the first `required` selectable ones, unless
+ * `ids` is given explicitly. ROUND_SETUP -> ON_DECK.
+ */
+export function pickRound(engine: GameEngine, hostId: string, ids?: string[]): string[] {
+  const round = engine.room.round;
+  if (!round) throw new Error('no round in progress');
+  const required = engine.requiredCategoryCount(round.number);
+  const chosen = ids ?? selectableCategoryIds(engine).slice(0, required);
+  expect(engine.pickCategories(hostId, chosen)).toEqual({ ok: true });
+  return chosen;
+}
+
+/** Arm the on-deck song, picking this round's categories first if needed. */
+export function armNext(engine: GameEngine, hostId: string): { ok: boolean; error?: string } {
+  if (engine.room.phase === 'ROUND_SETUP') pickRound(engine, hostId);
+  return engine.startSong(hostId, onDeckSongId(engine));
+}
+
 /** Arm the next song, have `buzzerId` buzz, judge them, and land in REVEAL. */
-export function playRound(
+export function playSong(
   engine: GameEngine,
   hostId: string,
   buzzerId: string,
   verdict: JudgeVerdict,
 ): void {
-  const armed = engine.startSong(hostId, firstUnusedSongId(engine));
-  expect(armed).toEqual({ ok: true });
+  expect(armNext(engine, hostId)).toEqual({ ok: true });
   expect(engine.buzz(buzzerId)).toEqual({ ok: true });
   expect(engine.judge(hostId, verdict)).toEqual({ ok: true });
+}
+
+/** playSong + advance past the reveal. */
+export function playAndAdvance(
+  engine: GameEngine,
+  hostId: string,
+  buzzerId: string,
+  verdict: JudgeVerdict = { titleCorrect: true, artistCorrect: true },
+): void {
+  playSong(engine, hostId, buzzerId, verdict);
+  expect(engine.nextQuestion(hostId)).toEqual({ ok: true });
 }
 
 let prevUsed = new WeakMap<GameEngine, number>();
@@ -141,6 +187,42 @@ export function checkInvariants(engine: GameEngine, bank?: QuestionBank): void {
     expect(pub.songsRemaining + used).toBe(pub.songsTotal);
   }
 
+  // ---- round bookkeeping ----
+  const round = room.round;
+  if (round && room.setlist) {
+    const catalogIds = new Set(room.setlist.songs.map((s) => s.id));
+    const drawn = round.categories.reduce((n, c) => n + c.songIds.length, 0);
+    expect(round.queue).toHaveLength(drawn);
+    expect(new Set(round.queue).size).toBe(round.queue.length);
+    for (const id of round.queue) {
+      expect(catalogIds.has(id)).toBe(true);
+      // `used` flips at SAMPLE time, so everything in the queue is already used
+      expect(room.setlist.songs.find((s) => s.id === id)!.used).toBe(true);
+    }
+    expect(round.cursor).toBeGreaterThanOrEqual(0);
+    expect(round.cursor).toBeLessThanOrEqual(round.queue.length);
+    // no two songs QUEUED to play share a videoId — the other half of the
+    // per-section dedupe bargain (buildSetlist dedupes only within a section,
+    // markUsedByVideoId stops the same track being drawn twice)
+    const queueVideoIds = round.queue.map(
+      (id) => room.setlist!.songs.find((s) => s.id === id)!.question.videoId,
+    );
+    expect(new Set(queueVideoIds).size).toBe(queueVideoIds.length);
+  }
+
+  // the upcoming category is public; nothing else about the song is
+  if (pub.onDeck) {
+    expect(room.phase).toBe('ON_DECK');
+    expect(Object.keys(pub.onDeck).sort()).toEqual([
+      'categoryTitle',
+      'indexInRound',
+      'roundNumber',
+      'songsInRound',
+    ]);
+  } else {
+    expect(room.phase).not.toBe('ON_DECK');
+  }
+
   // ---- spectator-safe leak checks ----
   if (pub.active && !pub.active.revealed) expect(pub.active.answer).toBeNull();
   const serialized = JSON.stringify(pub);
@@ -170,13 +252,17 @@ export function checkInvariants(engine: GameEngine, bank?: QuestionBank): void {
   for (const p of room.players) {
     const priv = toPrivateState(engine, p.id);
     if (!p.isHost) {
-      // the two host-only channels, both shut for everyone else
-      expect(priv.setlist).toBeNull();
+      // the host-only channels, all shut for everyone else
+      expect(priv.categoryPicker).toBeNull();
+      expect(priv.hostOnDeck).toBeNull();
       expect(priv.hostAnswer).toBeNull();
     } else {
-      // the host sees the setlist exactly while browsing, and the answer
-      // exactly while a round exists
-      expect(priv.setlist === null).toBe(!(room.phase === 'SETLIST' && !!room.setlist));
+      // the host sees the picker exactly while picking, the on-deck song
+      // exactly while one is on deck, and the answer exactly while a round exists
+      expect(priv.categoryPicker === null).toBe(
+        !(room.phase === 'ROUND_SETUP' && !!room.setlist),
+      );
+      expect(priv.hostOnDeck === null).toBe(!(room.phase === 'ON_DECK' && !!room.setlist));
       expect(priv.hostAnswer === null).toBe(!room.active);
     }
   }
@@ -184,7 +270,8 @@ export function checkInvariants(engine: GameEngine, bank?: QuestionBank): void {
   // The receiver's own projection: the least privileged surface in the system.
   const receiverPriv = toPrivateState(engine, null);
   expect(receiverPriv.hostAnswer).toBeNull();
-  expect(receiverPriv.setlist).toBeNull();
+  expect(receiverPriv.categoryPicker).toBeNull();
+  expect(receiverPriv.hostOnDeck).toBeNull();
   const receiverJson = JSON.stringify(receiverPriv);
   for (const cat of bank?.categories ?? []) {
     for (const q of cat.questions) expect(receiverJson).not.toContain(q.videoId);

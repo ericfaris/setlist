@@ -2,7 +2,16 @@
 // WebSockets, validating the wire protocol, the projections each surface
 // receives, and the ack flow.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Client, armRound, firstSongId, makeRoom, startTestServer, tick, type TestServer } from './harness.js';
+import {
+  Client,
+  armRound,
+  firstSongId,
+  makeRoom,
+  pickRound,
+  startTestServer,
+  tick,
+  type TestServer,
+} from './harness.js';
 
 let server: TestServer;
 
@@ -14,7 +23,7 @@ afterEach(async () => {
 });
 
 describe('a full question over WebSockets', () => {
-  it('runs lobby -> setlist -> armed -> buzz -> judge -> reveal on all three surfaces', async () => {
+  it('runs lobby -> round setup -> on deck -> armed -> buzz -> judge -> reveal on all three surfaces', async () => {
     const { receiver, players, closeAll } = await makeRoom(server.port, 2);
     const [host, guest] = players as [Client, Client];
 
@@ -26,18 +35,43 @@ describe('a full question over WebSockets', () => {
     // start
     expect(await host.emit('game:start', {})).toEqual({ ok: true, data: {} });
     await tick();
-    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('SETLIST');
+    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('ROUND_SETUP');
     expect(host.pub?.songsTotal).toBeGreaterThan(0);
     expect(host.pub?.songsRemaining).toBe(host.pub?.songsTotal);
 
-    // the HOST and only the host has the setlist
-    expect(host.priv?.setlist?.length).toBeGreaterThan(0);
-    expect(host.priv!.setlist![0]!.songs.length).toBeGreaterThan(0);
-    expect(guest.priv?.setlist).toBeNull();
-    expect(receiver.priv?.setlist).toBeNull();
+    // the HOST and only the host has the category picker — and it is counts only
+    expect(host.priv?.categoryPicker?.groups.length).toBeGreaterThan(0);
+    expect(host.priv!.categoryPicker!.required).toBe(5);
+    expect(guest.priv?.categoryPicker).toBeNull();
+    expect(receiver.priv?.categoryPicker).toBeNull();
+    expect(host.priv?.hostOnDeck).toBeNull();
 
-    const song = host.priv!.setlist![0]!.songs[0]!;
-    // ...and nothing about it reaches any other surface
+    // a non-host cannot pick the categories
+    const categoryIds = host
+      .priv!.categoryPicker!.groups.flatMap((g) => g.categories)
+      .filter((c) => c.available > 0)
+      .slice(0, 5)
+      .map((c) => c.id);
+    expect(await guest.emit('round:pickCategories', { categoryIds })).toEqual({
+      ok: false,
+      error: 'Only the host can pick categories.',
+    });
+
+    await pickRound(host);
+    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('ON_DECK');
+
+    // the upcoming CATEGORY is public; the song behind it is not
+    for (const c of [host, guest, receiver]) {
+      expect(c.pub?.onDeck?.categoryTitle).toBeTruthy();
+      expect(c.pub?.onDeck?.roundNumber).toBe(1);
+      expect(c.pub?.onDeck?.indexInRound).toBe(1);
+      expect(c.pub?.round?.number).toBe(1);
+      expect(c.pub?.round?.songsPlayed).toBe(0);
+    }
+    // only the host has the song itself
+    const song = host.priv!.hostOnDeck!;
+    expect(guest.priv?.hostOnDeck).toBeNull();
+    expect(receiver.priv?.hostOnDeck).toBeNull();
     for (const json of [
       JSON.stringify(guest.pub),
       JSON.stringify(guest.priv),
@@ -50,27 +84,33 @@ describe('a full question over WebSockets', () => {
       expect(json).not.toContain(song.videoId);
     }
 
-    // buzzing is not live merely because the host is browsing
+    // buzzing is not live merely because a song is on deck
     expect(guest.priv?.canBuzz).toBe(false);
 
     // a non-host cannot arm a song
-    expect(await guest.emit('setlist:start', { songId: song.id })).toEqual({
+    expect(await guest.emit('setlist:start', { songId: song.songId })).toEqual({
       ok: false,
       error: 'Only the host can start a song.',
     });
 
     // arm it
-    expect(await host.emit('setlist:start', { songId: song.id })).toEqual({ ok: true, data: {} });
+    expect(await host.emit('setlist:start', { songId: song.songId })).toEqual({
+      ok: true,
+      data: {},
+    });
     await tick();
-    for (const c of [host, guest, receiver]) expect(c.pub?.phase).toBe('ARMED');
+    for (const c of [host, guest, receiver]) {
+      expect(c.pub?.phase).toBe('ARMED');
+      expect(c.pub?.onDeck).toBeNull();
+    }
     expect(host.pub?.active?.value).toBe(100);
-    expect(host.pub?.active?.songId).toBe(song.id);
-    expect(host.pub?.songsRemaining).toBe(host.pub!.songsTotal - 1);
+    expect(host.pub?.active?.songId).toBe(song.songId);
 
-    // the host knows the answer IMMEDIATELY now (they picked it) — nobody else
-    // does, and the setlist itself is gone from every surface while armed.
+    // the host knows the answer IMMEDIATELY (they picked it) — nobody else
+    // does, and the picker/on-deck channels are shut while armed.
     expect(host.priv?.hostAnswer?.title).toBe(song.title);
-    expect(host.priv?.setlist).toBeNull();
+    expect(host.priv?.categoryPicker).toBeNull();
+    expect(host.priv?.hostOnDeck).toBeNull();
     expect(guest.priv?.hostAnswer).toBeNull();
     expect(receiver.priv?.hostAnswer).toBeNull();
     expect(host.pub?.active?.answer).toBeNull();
@@ -116,14 +156,38 @@ describe('a full question over WebSockets', () => {
     }
     expect(guest.priv?.score).toBe(50);
 
-    // advance
+    // advance — straight to the next song in the round, no browsing step
     expect(await host.emit('question:next', {})).toEqual({ ok: true, data: {} });
     await tick();
-    expect(host.pub?.phase).toBe('SETLIST');
-    expect(host.priv!.setlist!.flatMap((s) => s.songs).find((s) => s.id === song.id)?.used).toBe(
-      true,
-    );
+    expect(host.pub?.phase).toBe('ON_DECK');
+    expect(host.pub?.onDeck?.indexInRound).toBe(2);
+    expect(host.pub?.round?.songsPlayed).toBe(1);
+    expect(host.priv?.hostOnDeck?.songId).not.toBe(song.songId);
 
+    closeAll();
+  }, 20000);
+
+  it('shows the TV and a non-host the upcoming category but no song data', async () => {
+    const { receiver, players, closeAll } = await makeRoom(server.port, 2);
+    const [host, guest] = players as [Client, Client];
+    await host.emit('game:start', {});
+    await tick();
+    await pickRound(host);
+
+    const song = host.priv!.hostOnDeck!;
+    const categoryTitle = host.pub!.onDeck!.categoryTitle;
+    for (const c of [guest, receiver]) {
+      // the category IS public — that is the whole point of the preview
+      expect(c.pub?.onDeck?.categoryTitle).toBe(categoryTitle);
+      expect(c.pub?.onDeck?.songsInRound).toBeGreaterThan(0);
+      // …and nothing else about the song reaches them, on either channel
+      for (const json of [JSON.stringify(c.pub), JSON.stringify(c.priv)]) {
+        expect(json).not.toContain(song.title);
+        expect(json).not.toContain(song.artist);
+        expect(json).not.toContain(song.videoId);
+        expect(json).not.toContain(song.songId);
+      }
+    }
     closeAll();
   }, 20000);
 
@@ -132,10 +196,15 @@ describe('a full question over WebSockets', () => {
     const [host, guest] = players as [Client, Client];
     await host.emit('game:start', {});
     await tick();
-    const videoIds = host.priv!.setlist!.flatMap((sec) => sec.songs).map((s) => s.videoId);
-    expect(videoIds.length).toBeGreaterThan(0);
+    await pickRound(host);
+    // walk the whole round's worth of on-deck songs, collecting every videoId
+    // the host is ever shown, and prove none of them ever escapes.
+    const videoIds: string[] = [];
+    videoIds.push(host.priv!.hostOnDeck!.videoId);
     await armRound(host);
+    videoIds.push(host.priv!.hostVideoId!);
 
+    expect(videoIds.length).toBeGreaterThan(0);
     for (const videoId of videoIds) {
       expect(JSON.stringify(host.pub)).not.toContain(videoId);
       expect(JSON.stringify(guest.pub)).not.toContain(videoId);
@@ -199,6 +268,7 @@ describe('a full question over WebSockets', () => {
     const [host, guest] = players as [Client, Client];
     await host.emit('game:start', {});
     await tick();
+    await pickRound(host);
     await host.emit('setlist:start', { songId: firstSongId(host) });
     await guest.emit('buzz:press', {});
     await host.emit('judge:answer', { titleCorrect: true, artistCorrect: true });

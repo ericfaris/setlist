@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Build a Music Trivia question bank from the user's YouTube Music playlists.
+"""Build a Music Trivia question bank from YouTube Music.
 
 Run this by hand, offline. It is never invoked by the Node server — the server
 just reads the JSON file this writes (default: <repo>/question-bank/bank.json).
 
-Each playlist becomes a board category; each song becomes a question carrying
-its title, artist and YouTube video id.
+Two modes:
+
+  taxonomy  (default)  Build the fixed, curated ~61-category taxonomy defined
+                       in this file. Each category aggregates several large
+                       community playlists (fetched in FULL) and dedupes by
+                       videoId within the category.
+  playlists (legacy)   One category per source playlist (your library and/or
+                       --community-playlist/--community-search).
+
+Each song becomes a question carrying its title, artist and YouTube video id.
 
 One-time setup (see the repo README for the long version):
 
@@ -25,13 +33,14 @@ Never use a bare `python`/`pip` — always the venv's interpreter.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import random
 import re
 import sys
+import time
 import urllib.parse
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -47,18 +56,6 @@ POINT_VALUES = [100, 200, 300, 400, 500]
 
 BANK_VERSION = 1
 
-# Mirrors BOARD_COLUMNS in packages/shared/src/types.ts. Hardcoded rather than
-# parsed out of the TS source: the builder already mirrors POINT_VALUES the same
-# way, and a 5-line TS parser is more fragile than a constant with a comment.
-DEFAULT_CATEGORIES = 5
-
-# Anthropic defaults. Same env var name and default model as the sibling
-# pinpoint project (/home/eric/projects/pinpoint/.env.example).
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-
-# Upper bound on how many songs go into the AI prompt, to bound tokens.
-AI_POOL_LIMIT = 300
-
 # YouTube Data API v3 — used only to pre-filter songs with embedding disabled
 # by the rights holder (common on major-label official videos). Those videos
 # can't play in ANY embedded player, on any site — this is a per-video
@@ -72,9 +69,242 @@ class BuildError(Exception):
     """A fatal, user-actionable problem."""
 
 
-class AIUnavailable(Exception):
-    """The AI pass could not be used. Never fatal — the caller falls back to
-    one category per playlist, which is the builder's original behaviour."""
+# --------------------------------------------------------------------------
+# The curated category taxonomy. THIS is the config the user edits — a handful
+# of small tables that get expanded into CategoryDefs by the _*_defs() helpers
+# below. There is deliberately no if/elif chain anywhere in here: adding "Pop
+# sub-genres" later is a two-line edit to a table plus one expander.
+#
+# `key` and `group` are IDENTIFIERS (they derive the bank category id
+# `cat_tax_<group>__<key>`); renaming either orphans the category in banks
+# built earlier. `title` may be changed freely.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CategoryDef:
+    key: str  # stable slug; drives the bank id. e.g. "90s_grunge"
+    title: str  # display title. e.g. "90s Grunge"
+    group: str  # taxonomy group slug. e.g. "rock_sub"
+    queries: tuple[str, ...] = ()  # community-playlist search queries, priority order
+    playlist_ids: tuple[str, ...] = ()  # optional hand-pinned playlist ids/URLs
+    max_playlists: int = 4  # how many distinct playlists to aggregate
+    enabled: bool = True  # flip False to park a category without deleting it
+
+
+def slugify(value: str) -> str:
+    """Lowercase [a-z0-9_] slug. Never emits a double underscore, which is what
+    keeps `cat_tax_<group>__<key>` unambiguously splittable."""
+    # Apostrophes are dropped rather than turned into separators, so "Today's"
+    # slugs to "todays" and not "today_s".
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower().replace("'", "")).strip("_")
+    return re.sub(r"_+", "_", slug) or "category"
+
+
+# (slug, display title, search token). The search token exists because a couple
+# of display names are poor queries ("Hip-Hop/Rap" searches badly; "hip hop"
+# does not).
+PLAIN_GENRES: tuple[tuple[str, str, str], ...] = (
+    ("pop", "Pop", "pop"),
+    ("rock", "Rock", "rock"),
+    ("hiphop", "Hip-Hop/Rap", "hip hop"),
+    ("rnb", "R&B/Soul", "r&b soul"),
+    ("country", "Country", "country"),
+)
+
+DECADES: tuple[str, ...] = ("50s", "60s", "70s", "80s", "90s", "2000s", "2010s", "Today's")
+
+# Only where the genre has meaningful real content that era. Hip-Hop didn't
+# meaningfully exist as a charting genre before the 80s.
+GENRE_DECADES: dict[str, tuple[str, ...]] = {
+    "pop": DECADES,
+    "rock": DECADES,
+    "rnb": DECADES,
+    "country": DECADES,
+    "hiphop": ("80s", "90s", "2000s", "2010s", "Today's"),
+}
+
+ROCK_SUBGENRES: tuple[str, ...] = (
+    "Grunge",
+    "Classic Rock",
+    "Hard Rock",
+    "Alternative Rock",
+    "Indie Rock",
+    "Southern Rock",
+    "Psychedelic Rock",
+    "Garage Rock",
+    "Yacht Rock",
+)
+
+# (key, display title, era search token). The key is spelled out rather than
+# derived from the title because "2000s Pop" exists twice in the agreed
+# taxonomy — once as Pop × 2000s, once as a cross-genre era category — and keys
+# must stay globally unique. "50s & 60s Oldies" gets hand-written queries
+# instead of the era template — see _era_defs().
+ERA_CATEGORIES: tuple[tuple[str, str, str], ...] = (
+    ("50s_60s_oldies", "50s & 60s Oldies", ""),
+    ("70s_hits", "70s Hits", "70s"),
+    ("80s_throwbacks", "80s Throwbacks", "80s"),
+    ("90s_nostalgia", "90s Nostalgia", "90s"),
+    ("2000s_pop_hits", "2000s Pop", "2000s"),
+    ("2010s_chart_toppers", "2010s Chart Toppers", "2010s"),
+    ("todays_hits", "Today's Hits", "2020s"),
+)
+
+OLDIES_QUERIES: tuple[str, ...] = (
+    "oldies 50s 60s",
+    "60s oldies",
+    "50s and 60s hits",
+    "oldies party playlist",
+)
+
+SPECIAL_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "Boy Bands/Girl Groups",
+        (
+            "boy band hits",
+            "girl group hits",
+            "best boy bands playlist",
+            "90s boy bands and girl groups",
+        ),
+    ),
+    (
+        "Solo Artists",
+        (
+            "biggest solo artist hits",
+            "solo pop stars playlist",
+            "greatest solo hits of all time",
+            "iconic solo artists",
+        ),
+    ),
+    (
+        "One-Hit Wonders",
+        (
+            "one hit wonders",
+            "best one hit wonders playlist",
+            "80s one hit wonders",
+            "90s one hit wonders",
+        ),
+    ),
+)
+
+
+def _genre_defs() -> tuple[CategoryDef, ...]:
+    return tuple(
+        CategoryDef(
+            key=slug,
+            title=title,
+            group="genre",
+            queries=(
+                f"best {token} songs",
+                f"{token} hits playlist",
+                f"ultimate {token} playlist",
+                f"top {token} songs of all time",
+            ),
+        )
+        for slug, title, token in PLAIN_GENRES
+    )
+
+
+def _decade_queries(decade: str, token: str) -> tuple[str, ...]:
+    # A literal "Today's" search returns junk, so that decade gets its own
+    # templates rather than a special case buried in the loop.
+    if decade == "Today's":
+        return (
+            f"2020s {token} hits",
+            f"todays {token} hits",
+            f"new {token} hits 2020s",
+            f"current {token} hits",
+        )
+    return (
+        f"{decade} {token} hits",
+        f"best {decade} {token} songs",
+        f"{decade} {token} playlist",
+        f"ultimate {decade} {token}",
+    )
+
+
+def _genre_decade_defs() -> tuple[CategoryDef, ...]:
+    defs: list[CategoryDef] = []
+    for slug, title, token in PLAIN_GENRES:
+        for decade in GENRE_DECADES.get(slug, ()):
+            defs.append(
+                CategoryDef(
+                    key=f"{slugify(decade)}_{slug}",
+                    title=f"{decade} {title}",
+                    group=f"decade_{slug}",
+                    queries=_decade_queries(decade, token),
+                )
+            )
+    return tuple(defs)
+
+
+def _rock_sub_defs() -> tuple[CategoryDef, ...]:
+    return tuple(
+        CategoryDef(
+            key=slugify(sub),
+            title=sub,
+            group="rock_sub",
+            queries=(
+                f"{sub.lower()} songs",
+                f"best {sub.lower()} songs",
+                f"{sub.lower()} hits playlist",
+                f"ultimate {sub.lower()} playlist",
+            ),
+        )
+        for sub in ROCK_SUBGENRES
+    )
+
+
+def _era_defs() -> tuple[CategoryDef, ...]:
+    defs: list[CategoryDef] = []
+    for key, title, token in ERA_CATEGORIES:
+        queries = (
+            OLDIES_QUERIES
+            if not token
+            else (
+                f"{token} hits",
+                f"{token} classics",
+                f"best songs of the {token}",
+                f"{token} party playlist",
+            )
+        )
+        defs.append(CategoryDef(key=key, title=title, group="era", queries=queries))
+    return tuple(defs)
+
+
+def _special_defs() -> tuple[CategoryDef, ...]:
+    return tuple(
+        CategoryDef(key=slugify(title), title=title, group="special", queries=queries)
+        for title, queries in SPECIAL_CATEGORIES
+    )
+
+
+TAXONOMY: tuple[CategoryDef, ...] = (
+    *_genre_defs(),
+    *_genre_decade_defs(),
+    *_rock_sub_defs(),
+    *_era_defs(),
+    *_special_defs(),
+)
+
+
+def make_taxonomy_category_id(cat: CategoryDef) -> str:
+    """`cat_tax_<group>__<key>`. Derived from the config, so a rebuild is stable
+    and the shared `parseCategoryGroup()` can recover the group client-side."""
+    return f"cat_tax_{cat.group}__{cat.key}"
+
+
+def taxonomy_categories(filters: Sequence[str] = ()) -> list[CategoryDef]:
+    """Enabled taxonomy entries, optionally narrowed by case-insensitive
+    key/title substring (that's what `--category` passes in)."""
+    cats = [c for c in TAXONOMY if c.enabled]
+    needles = [f.strip().lower() for f in filters if f and f.strip()]
+    if not needles:
+        return cats
+    return [
+        c for c in cats if any(n in c.key.lower() or n in c.title.lower() for n in needles)
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -226,20 +456,26 @@ def parse_playlist_id(value: str) -> str:
     return candidate
 
 
-def search_community_playlist(client: Any, query: str, log: Any) -> dict[str, Any] | None:
-    """Search YT Music's community playlists and return the first usable hit.
+def search_community_playlists(
+    client: Any, query: str, log: Any, max_results: int = 1
+) -> list[dict[str, Any]]:
+    """Search YT Music's community playlists and return up to `max_results`
+    usable hits, in YT Music's own relevance order.
 
     No ranking: YT Music's own relevance order is the ranking, and any heuristic
-    we layered on top would be unexplainable to the user. The pick is logged
+    we layered on top would be unexplainable to the user. Each pick is logged
     instead so it can be sanity-checked.
     """
     try:
         results = client.search(query, filter="community_playlists", limit=20) or []
     except Exception as exc:  # unofficial API — one bad query must not abort the run
         log(f"  skip: community search {query!r} failed: {exc}")
-        return None
+        return []
 
+    hits: list[dict[str, Any]] = []
     for entry in results:
+        if len(hits) >= max_results:
+            break
         if not isinstance(entry, dict):
             continue
         result_type = entry.get("resultType")
@@ -264,10 +500,17 @@ def search_community_playlist(client: Any, query: str, log: Any) -> dict[str, An
         by = f" by {author}" if author else ""
         count = f", {hit['itemCount']} items" if hit["itemCount"] else ""
         log(f"  community search {query!r} -> {hit['title']!r}{by} ({pid}{count})")
-        return hit
+        hits.append(hit)
 
-    log(f"  skip: community search {query!r} returned no usable playlist")
-    return None
+    if not hits:
+        log(f"  skip: community search {query!r} returned no usable playlist")
+    return hits
+
+
+def search_community_playlist(client: Any, query: str, log: Any) -> dict[str, Any] | None:
+    """First usable hit, or None. The legacy --community-search entry point."""
+    hits = search_community_playlists(client, query, log, max_results=1)
+    return hits[0] if hits else None
 
 
 # --------------------------------------------------------------------------
@@ -368,26 +611,42 @@ class BuildOptions:
         seed: int | None = None,
         community_playlists: Sequence[str] = (),
         community_searches: Sequence[str] = (),
-        categories: int = DEFAULT_CATEGORIES,
-        no_ai: bool = False,
         youtube_api_key: str | None = None,
         no_library: bool = False,
+        mode: str = "taxonomy",
+        category_filters: Sequence[str] = (),
+        max_playlists_per_category: int = 4,
+        per_query_results: int = 2,
+        min_category_songs: int = 25,
+        max_songs_per_category: int = 0,
+        sleep_ms: int = 250,
     ) -> None:
+        # ---- legacy "playlists" mode ----
         self.playlists = list(playlists)
         # Caps how many *source playlists* are read.
         self.max_categories = max_categories
         self.songs_per_category = songs_per_category
         self.min_songs = min_songs
-        self.seed = seed
         self.community_playlists = list(community_playlists)
         self.community_searches = list(community_searches)
-        # Caps how many *AI categories* come out. Unused on the fallback path.
-        self.categories = categories
-        self.no_ai = no_ai
-        self.youtube_api_key = youtube_api_key
         # Community sources are additive by default; this opts OUT of the
         # library entirely (e.g. "just build from these community playlists").
         self.no_library = no_library
+
+        # ---- shared ----
+        self.seed = seed
+        self.youtube_api_key = youtube_api_key
+        # "taxonomy" (the curated ~61 categories) or "playlists" (legacy).
+        self.mode = mode
+
+        # ---- taxonomy mode ----
+        self.category_filters = list(category_filters)
+        self.max_playlists_per_category = max_playlists_per_category
+        self.per_query_results = per_query_results
+        self.min_category_songs = min_category_songs
+        # 0 = unlimited (the normal case — we WANT hundreds per category).
+        self.max_songs_per_category = max_songs_per_category
+        self.sleep_ms = sleep_ms
 
 
 def collect_sources(client: Any, opts: BuildOptions, rng: random.Random, log: Any) -> list[dict]:
@@ -442,7 +701,10 @@ def collect_sources(client: Any, opts: BuildOptions, rng: random.Random, log: An
         seen_playlist_ids.add(pid)
 
         try:
-            detail = client.get_playlist(pid, limit=200) or {}
+            # limit=None fetches the COMPLETE track list (ytmusicapi 1.12.1:
+            # `limit: int | None = 100` — "None retrieves them all"). A 200-song
+            # cap would silently truncate the best sources.
+            detail = client.get_playlist(pid, limit=None) or {}
         except Exception as exc:  # unofficial API — one bad playlist isn't fatal
             log(f"  skip: could not read playlist {pid}: {exc}")
             continue
@@ -509,317 +771,228 @@ def categories_from_sources(
 
 
 # --------------------------------------------------------------------------
-# AI categorisation. One batch call per run; the model only groups, titles and
-# flags songs ytmusicapi already returned — it never names or invents one.
-#
-# Tradeoff, deliberately taken: categorisation and the content-safety pass
-# share a single request. One request means one song enumeration, so "song 17
-# is blocked" and "song 17 is in category 2" refer to the same track by
-# construction. Two calls would isolate parse failures (a malformed
-# categorisation reply could still yield usable safety flags) and each reply
-# would be simpler to parse — but they would also mean two enumerations that
-# must stay byte-identical, and any drift silently mis-targets the *safety*
-# verdicts. With one call a parse failure loses both and we fall back to one
-# category per playlist with no AI safety pass; that is acceptable because
-# `isExplicit` is the authoritative filter and always runs before the AI is
-# consulted, and the fallback is exactly today's shipped behaviour. Anything
-# the AI does flag is always dropped.
+# Taxonomy mode: a new *orchestration* layer over the ingestion primitives
+# above (parse_playlist_id / search_community_playlists / get_playlist /
+# usable_track). No new low-level YouTube Music code lives here.
 # --------------------------------------------------------------------------
 
 
-def build_ai_prompt(songs: Sequence[dict], n_categories: int, min_songs: int) -> str:
-    """Build the single user message. Only titles and artists go in — never a
-    videoId — and the model answers in 1-based indices into this list."""
-    lines = []
-    for i, song in enumerate(songs):
-        # 1-based in the prompt (models are more reliable with it); converted
-        # back to 0-based on the way in, in parse_ai_response().
-        lines.append('{}. "{}" — {}'.format(i + 1, song["title"], song["artist"]))
-    listing = "\n".join(lines)
-    return (
-        "You are helping build a family-friendly music trivia game board.\n\n"
-        "Below is a numbered list of real songs. Do TWO things:\n\n"
-        f"1. Group them into exactly {n_categories} fun, cross-cutting trivia "
-        'categories with short, punchy titles (e.g. "Songs About Cars", '
-        '"One-Hit Wonders", "80s Power Ballads"). Titles must be 40 characters '
-        "or fewer. Use only the numbers below — never invent, rename, or "
-        "substitute a song. Each song belongs to at most one category. It is "
-        "fine to leave songs out if they fit nowhere. Aim for at least "
-        f"{min_songs} songs per category. Favor DECADE DIVERSITY: if the list "
-        "has enough recognizable songs from the 1960s and/or 1970s (using what "
-        "you know about each song's actual release era), make sure at least "
-        "one category highlights that music — e.g. \"60s Classics\" or \"70s "
-        "Gold\" — rather than letting every category cluster into the eras "
-        "that happen to be most common in the list.\n\n"
-        "2. Separately, flag any song whose title or artist name alone looks "
-        "inappropriate for a family party setting (sexual content, slurs, "
-        "graphic violence, drug glorification). Be conservative: when in doubt, "
-        "flag it. Flagged songs must NOT also appear in any category.\n\n"
-        f"Songs:\n{listing}\n\n"
-        "Respond with ONLY a JSON object of this exact shape and nothing else:\n"
-        '{"categories": [{"title": "...", "songs": [1, 5, 9]}], "blocked": [3, 7]}'
-    )
+def collect_category_playlists(
+    client: Any, cat: CategoryDef, opts: BuildOptions, log: Any
+) -> list[tuple[str, str]]:
+    """Candidate `(playlistId, knownTitle)` pairs for one category.
 
-
-def _balanced_json_slice(text: str) -> str | None:
-    """Return the brace-balanced substring starting at the first '{'.
-
-    Better than a greedy /\\{[\\s\\S]*\\}/ here: a truncated reply's trailing
-    prose would otherwise poison the match.
+    Pinned `cat.playlist_ids` are consumed FIRST (that's the hand-tuning escape
+    hatch: paste two URLs into a CategoryDef and a badly-searching category is
+    fixed without touching code), then each query in order contributes up to
+    `opts.per_query_results` hits, stopping at `max_playlists` distinct ids.
+    A pinned entry yields an empty known title so the playlist's own title wins.
     """
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-            continue
-        if ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : i + 1]
-    return None
+    cap = min(cat.max_playlists, opts.max_playlists_per_category)
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
 
-
-def _strip_fences(text: str) -> str:
-    stripped = text.strip()
-    if not stripped.startswith("```"):
-        return stripped
-    lines = stripped.splitlines()
-    lines = lines[1:]  # drop the ```json / ``` opener
-    while lines and lines[-1].strip().startswith("```"):
-        lines.pop()
-    return "\n".join(lines).strip()
-
-
-def _first_list(obj: dict, *keys: str) -> list:
-    for key in keys:
-        value = obj.get(key)
-        if isinstance(value, list):
-            return value
-    return []
-
-
-def _as_index(value: Any) -> int | None:
-    """Coerce a 1-based index (int or numeric string) to 0-based, or None."""
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        n = value
-    elif isinstance(value, str) and value.strip().lstrip("+-").isdigit():
-        n = int(value.strip())
-    else:
-        return None
-    return n - 1 if n >= 1 else None
-
-
-def parse_ai_response(raw: str) -> tuple[list[dict], list[int]]:
-    """Parse the model's reply into (categories, blocked), 0-based.
-
-    Mirrors pinpoint's extractNames() philosophy — prefer JSON, degrade
-    permissively — but for a nested payload line-parsing is meaningless, so the
-    permissive layer is fence-stripping, brace-slicing and per-field tolerance.
-    Never raises on a weird field; it just skips it.
-    """
-    parsed: Any = None
-    attempts: list[str] = [raw.strip() if raw else ""]
-    fenced = _strip_fences(raw or "")
-    attempts.append(fenced)
-    sliced = _balanced_json_slice(fenced) or _balanced_json_slice(raw or "")
-    if sliced:
-        attempts.append(sliced)
-        attempts.append(re.sub(r",\s*([}\]])", r"\1", sliced))
-    for attempt in attempts:
-        if not attempt:
-            continue
+    for raw in cat.playlist_ids:
+        if len(out) >= cap:
+            return out
         try:
-            candidate = json.loads(attempt)
-        except (ValueError, TypeError):
+            pid = parse_playlist_id(raw)
+        except BuildError as exc:
+            log(f"  skip: pinned playlist {raw!r}: {exc}")
             continue
-        if isinstance(candidate, dict):
-            parsed = candidate
+        if pid in seen:
+            continue
+        seen.add(pid)
+        out.append((pid, ""))
+
+    for query in cat.queries:
+        if len(out) >= cap:
             break
-    if parsed is None:
-        raise AIUnavailable("could not parse the model's reply as JSON")
-
-    blocked: list[int] = []
-    for value in _first_list(parsed, "blocked", "flagged", "excluded"):
-        idx = _as_index(value)
-        if idx is not None and idx not in blocked:
-            blocked.append(idx)
-
-    categories: list[dict] = []
-    claimed: set[int] = set()
-    for entry in _first_list(parsed, "categories", "groups"):
-        if not isinstance(entry, dict):
-            continue
-        title = entry.get("title")
-        if not isinstance(title, str) or not title.strip():
-            title = entry.get("name")
-        if not isinstance(title, str) or not title.strip():
-            continue
-        indices: list[int] = []
-        for value in _first_list(entry, "songs", "indices", "tracks", "items"):
-            idx = _as_index(value)
-            if idx is None or idx in claimed:
+        hits = search_community_playlists(client, query, log, max_results=opts.per_query_results)
+        for hit in hits:
+            if len(out) >= cap:
+                break
+            pid = str(hit["playlistId"])
+            if pid in seen:
                 continue
-            claimed.add(idx)
-            indices.append(idx)
-        categories.append({"title": title.strip()[:60], "songs": indices})
-
-    if not categories:
-        raise AIUnavailable("the model returned no usable categories")
-    return categories, blocked
+            seen.add(pid)
+            out.append((pid, str(hit["title"])))
+    return out
 
 
-def call_ai(ai_client: Any, prompt: str, model: str, log: Any) -> str:
-    """Make the one request and return the reply text. Every failure mode — an
-    API error, a refusal, a truncation, a reply with no text — becomes
-    AIUnavailable, so the caller can fall back instead of crashing."""
-    try:
-        response = ai_client.messages.create(
-            model=model,
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}],
+def collect_category_songs(
+    client: Any, cat: CategoryDef, opts: BuildOptions, log: Any, sleep: Any = None
+) -> list[dict[str, Any]]:
+    """Fetch every candidate playlist IN FULL and return the category's songs.
+
+    Deduped by videoId WITHIN THIS CATEGORY ONLY: the same track legitimately
+    belongs to "Rock", "90s Rock" and "90s Grunge", and a global dedupe would
+    gut every category after the first. (The engine's per-game "never play the
+    same song twice" guarantee is enforced separately, by videoId, at draw
+    time.)
+    """
+    sleeper = time.sleep if sleep is None else sleep
+    candidates = collect_category_playlists(client, cat, opts, log)
+
+    songs: list[dict[str, Any]] = []
+    seen_video_ids: set[str] = set()
+    n_playlists = 0
+
+    for i, (pid, known_title) in enumerate(candidates):
+        if i > 0:
+            # Rate-limit courtesy on an unofficial API; a full run is ~500 calls.
+            sleeper(opts.sleep_ms / 1000.0)
+        try:
+            detail = client.get_playlist(pid, limit=None) or {}
+        except Exception as exc:  # one bad playlist must never abort a 30min run
+            log(f"  skip: could not read playlist {pid}: {exc}")
+            continue
+        title = known_title or detail.get("title") or pid
+        tracks: Iterable[Any] = detail.get("tracks") or []
+
+        usable = 0
+        skipped = 0
+        dupes = 0
+        for entry in tracks:
+            q = usable_track(entry)
+            if q is None:
+                skipped += 1
+                continue
+            if q["videoId"] in seen_video_ids:
+                dupes += 1
+                continue
+            seen_video_ids.add(q["videoId"])
+            songs.append(q)
+            usable += 1
+
+        n_playlists += 1
+        dupe_note = f" ({dupes} dupes)" if dupes else ""
+        log(
+            f"  + {title!r} ({pid}): {usable} usable, {skipped} skipped{dupe_note}"
+            f" — category total {len(songs)}"
         )
-    except Exception as exc:  # APIError, timeout, auth — anything at all
-        raise AIUnavailable(f"the API call failed: {exc}") from exc
 
-    stop_reason = getattr(response, "stop_reason", None)
-    if stop_reason == "refusal":
-        raise AIUnavailable("the model declined the request")
-    if stop_reason == "max_tokens":
-        raise AIUnavailable("the reply was truncated (max_tokens)")
-
-    for block in getattr(response, "content", None) or []:
-        if getattr(block, "type", None) == "text":
-            text = getattr(block, "text", None)
-            if isinstance(text, str) and text.strip():
-                return text
-    raise AIUnavailable("the reply contained no text")
+    log(f"  {cat.title}: {len(songs)} songs from {n_playlists} playlists")
+    return songs
 
 
-def make_category_id(title: str, used_ids: set[str]) -> str:
-    """`cat_ai_<slug>_<hash6>` — derived, not random, so a rebuild with the same
-    AI titles yields the same ids. Collisions (identical titles) get _2, _3, …"""
-    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")[:40] or "category"
-    digest = hashlib.sha1(title.encode("utf-8")).hexdigest()[:6]
-    base = f"cat_ai_{slug}_{digest}"
-    candidate = base
-    n = 2
-    while candidate in used_ids:
-        candidate = f"{base}_{n}"
-        n += 1
-    used_ids.add(candidate)
-    return candidate
-
-
-def categories_from_ai(
-    ai_client: Any,
-    sources: Sequence[dict],
+def categories_from_taxonomy(
+    client: Any,
     opts: BuildOptions,
     rng: random.Random,
     log: Any,
+    sleep: Any = None,
+    dropped: list[tuple[str, int]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Pool every source's songs, send them to Claude in one call, and build
-    cross-cutting categories out of what comes back."""
-    pool: list[dict[str, Any]] = [q for source in sources for q in source["questions"]]
-    if len(pool) > AI_POOL_LIMIT:
-        log(f"AI: pooling a sample of {AI_POOL_LIMIT} of {len(pool)} songs")
-        pool = rng.sample(pool, AI_POOL_LIMIT)
+    """Build one bank category per enabled taxonomy entry.
 
-    model = os.environ.get("ANTHROPIC_MODEL") or DEFAULT_MODEL
-    prompt = build_ai_prompt(pool, opts.categories, opts.min_songs)
-    ai_categories, blocked = parse_ai_response(call_ai(ai_client, prompt, model, log))
+    Categories below `--min-category-songs` are dropped with a warning and
+    appended to `dropped` (title, count) for the end-of-run summary. Only a
+    completely empty result is fatal.
+    """
+    defs = taxonomy_categories(opts.category_filters)
+    if not defs:
+        raise BuildError(
+            "No taxonomy category matched --category. Run --list-categories to see them all."
+        )
 
-    blocked_set = {i for i in blocked if 0 <= i < len(pool)}
-    if blocked_set:
-        log(f"AI: dropped {len(blocked_set)} track(s) flagged by the content pass")
-
-    used_ids: set[str] = set()
-    assigned: set[int] = set()
     categories: list[dict[str, Any]] = []
-    for entry in ai_categories:
-        if len(categories) >= opts.categories:
-            break
-        picked = [
-            i
-            for i in entry["songs"]
-            if 0 <= i < len(pool) and i not in blocked_set and i not in assigned
-        ]
-        if len(picked) < opts.min_songs:
+    total = len(defs)
+    for i, cat in enumerate(defs, start=1):
+        log(f"[{i}/{total}] {cat.title}")
+        songs = collect_category_songs(client, cat, opts, log, sleep=sleep)
+        if len(songs) < opts.min_category_songs:
             log(
-                f"  skip: AI category {entry['title']!r} has only {len(picked)} "
-                f"usable songs (need {opts.min_songs})"
+                f"  drop: {cat.title!r} has only {len(songs)} songs "
+                f"(need {opts.min_category_songs})"
             )
+            if dropped is not None:
+                dropped.append((cat.title, len(songs)))
             continue
-        assigned.update(picked)
-        questions = [pool[i] for i in picked]
-        if len(questions) > opts.songs_per_category:
-            questions = rng.sample(questions, opts.songs_per_category)
-        for i, q in enumerate(questions):
-            q["value"] = POINT_VALUES[min(i, len(POINT_VALUES) - 1)]
+        if opts.max_songs_per_category and len(songs) > opts.max_songs_per_category:
+            songs = rng.sample(songs, opts.max_songs_per_category)
+        # Flat value: the engine assigns the authoritative SONG_POINT_VALUE.
+        for q in songs:
+            q["value"] = POINT_VALUES[0]
         categories.append(
             {
-                "id": make_category_id(entry["title"], used_ids),
-                "title": entry["title"],
+                "id": make_taxonomy_category_id(cat),
+                "title": cat.title,
                 "playlistId": None,
-                "questions": questions,
+                "questions": songs,
             }
         )
 
     if not categories:
-        raise AIUnavailable("the model returned no usable categories")
-
-    leftover = len(pool) - len(assigned) - len(blocked_set)
-    if leftover > 0:
-        log(f"AI: {leftover} pooled song(s) went unassigned (normal — not every song fits a theme)")
+        raise BuildError(
+            f"No taxonomy category reached {opts.min_category_songs} songs. "
+            "Lower --min-category-songs, or check that YT Music auth is working."
+        )
     return categories
+
+
+def merge_bank(existing: dict[str, Any], bank: dict[str, Any]) -> dict[str, Any]:
+    """Merge freshly-built categories into an existing bank: same-id categories
+    are replaced in place, everything else is preserved, and genuinely new
+    categories are appended. Makes `--category "Yacht Rock" --merge` cheap."""
+    new_by_id = {str(c.get("id")): c for c in bank.get("categories") or []}
+    merged: list[dict[str, Any]] = []
+    replaced: set[str] = set()
+    for cat in existing.get("categories") or []:
+        cid = str(cat.get("id"))
+        if cid in new_by_id:
+            merged.append(new_by_id[cid])
+            replaced.add(cid)
+        else:
+            merged.append(cat)
+    for cat in bank.get("categories") or []:
+        if str(cat.get("id")) not in replaced:
+            merged.append(cat)
+    return {**bank, "categories": merged}
 
 
 def build_bank(
     client: Any,
     opts: BuildOptions,
     log: Any = print,
-    ai_client: Any = None,
     youtube_session: Any = None,
+    sleep: Any = None,
+    dropped: list[tuple[str, int]] | None = None,
 ) -> dict[str, Any]:
-    """Read playlists via `client` and return a QuestionBank dict.
+    """Read YouTube Music via `client` and return a QuestionBank dict.
 
     `client` is anything with ytmusicapi's `get_library_playlists(limit=...)`,
     `get_playlist(playlistId, limit=...)` and `search(query, filter=..., limit=...)`
     methods — the tests pass a fake.
 
-    `ai_client` is optional and duck-typed: an object exposing
-    `.messages.create(model=..., max_tokens=..., messages=[...])` returning an
-    object with `.stop_reason` and `.content` (a list of blocks with `.type` and
-    `.text`) — i.e. the `anthropic.Anthropic` surface. `None` (the default, and
-    what `--no-ai` and a missing ANTHROPIC_API_KEY produce) means one category
-    per playlist.
+    `opts.mode`:
+      "taxonomy"  — the curated categories (§ categories_from_taxonomy). The
+                    library, the embeddable pre-check and `collect_sources()`
+                    are all bypassed entirely.
+      "playlists" — the legacy one-category-per-source-playlist path, verbatim.
 
     `youtube_session` is optional and duck-typed: an object exposing
     `.get(url, params=..., timeout=...)` returning an object with `.json()` —
     i.e. a `requests.Session`. Combined with `opts.youtube_api_key`, it gates
     the embeddable pre-check (§ filter_embeddable); either being absent skips
-    it entirely — no key, no check, same as today's behaviour.
+    it entirely. Legacy mode only.
 
-    build_bank() never constructs either client itself, so no test can reach
-    the network or pick up a real key.
+    `sleep` is injected purely so tests don't wait; `dropped` collects
+    (title, count) for taxonomy categories that came in too thin.
+
+    build_bank() never constructs a client itself, so no test can reach the
+    network or pick up a real key.
     """
     rng = random.Random(opts.seed)
+
+    if opts.mode == "taxonomy":
+        categories = categories_from_taxonomy(client, opts, rng, log, sleep=sleep, dropped=dropped)
+        return {
+            "version": BANK_VERSION,
+            "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": "ytmusicapi",
+            "categories": categories,
+        }
 
     sources = collect_sources(client, opts, rng, log)
 
@@ -837,16 +1010,7 @@ def build_bank(
             "embed restrictions, so this filter is no longer needed."
         )
 
-    if ai_client is not None and not opts.no_ai:
-        try:
-            categories = categories_from_ai(ai_client, sources, opts, rng, log)
-        except AIUnavailable as exc:
-            log(f"AI categorisation skipped ({exc}); falling back to one category per playlist.")
-            categories = categories_from_sources(sources, opts, rng)
-    else:
-        reason = "--no-ai" if opts.no_ai else "no AI client"
-        log(f"AI categorisation skipped ({reason}); falling back to one category per playlist.")
-        categories = categories_from_sources(sources, opts, rng)
+    categories = categories_from_sources(sources, opts, rng)
 
     return {
         "version": BANK_VERSION,
@@ -914,35 +1078,6 @@ def make_client(
             oauth_credentials=OAuthCredentials(client_id=client_id, client_secret=client_secret),
         )
     return YTMusic(str(auth_file))
-
-
-def make_ai_client(log: Any = print) -> Any | None:
-    """Build an Anthropic client, or return None (with a reason) if we can't.
-
-    Never raises: no key and no package are both ordinary, non-fatal states that
-    simply mean "one category per playlist". The env var is read here rather
-    than at import time so no test can pick up a real key.
-    """
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        log(
-            "ANTHROPIC_API_KEY not set; using one category per playlist. "
-            "Set it to get AI-generated categories."
-        )
-        return None
-    try:
-        import anthropic  # imported late so --help works uninstalled
-    except ImportError:
-        log(
-            "the `anthropic` package is not installed "
-            f"(pip install -r {SCRIPT_DIR}/requirements.txt); "
-            "using one category per playlist."
-        )
-        return None
-    try:
-        return anthropic.Anthropic()
-    except Exception as exc:  # pragma: no cover - environment problem
-        log(f"could not create the Anthropic client ({exc}); using one category per playlist.")
-        return None
 
 
 def make_youtube_session(log: Any = print) -> Any | None:
@@ -1029,15 +1164,58 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--categories",
-        type=int,
-        default=DEFAULT_CATEGORIES,
-        help=f"how many AI categories to ask for (default: {DEFAULT_CATEGORIES}, the board's columns)",
+        "--mode",
+        choices=("taxonomy", "playlists"),
+        default="taxonomy",
+        help="taxonomy: the curated ~61 categories (default). playlists: legacy one-per-playlist",
     )
     parser.add_argument(
-        "--no-ai",
+        "--category",
+        action="append",
+        default=[],
+        metavar="KEY_OR_TITLE",
+        dest="category_filters",
+        help="repeatable: build only taxonomy categories matching this substring",
+    )
+    parser.add_argument(
+        "--list-categories",
         action="store_true",
-        help="skip the AI call; force one category per source playlist",
+        help="print the taxonomy (group / key / title / #queries) and exit — no network",
+    )
+    parser.add_argument(
+        "--max-playlists-per-category",
+        type=int,
+        default=4,
+        help="how many distinct community playlists to aggregate per category (default: 4)",
+    )
+    parser.add_argument(
+        "--per-query-results",
+        type=int,
+        default=2,
+        help="how many usable hits to take from each community search (default: 2)",
+    )
+    parser.add_argument(
+        "--min-category-songs",
+        type=int,
+        default=25,
+        help="drop a taxonomy category with fewer usable songs than this (default: 25)",
+    )
+    parser.add_argument(
+        "--max-songs-per-category",
+        type=int,
+        default=0,
+        help="cap songs per taxonomy category (default: 0 = unlimited)",
+    )
+    parser.add_argument(
+        "--sleep-ms",
+        type=int,
+        default=250,
+        help="pause between playlist fetches, in ms (default: 250)",
+    )
+    parser.add_argument(
+        "--merge",
+        action="store_true",
+        help="merge into the existing --out bank: same-id categories are replaced, the rest kept",
     )
     parser.add_argument(
         "--youtube-api-key",
@@ -1068,15 +1246,35 @@ def write_bank(bank: dict[str, Any], out: Path) -> None:
         f.write("\n")
 
 
+def print_taxonomy(out: Any = print) -> None:
+    """`--list-categories`: the whole taxonomy, no network, no auth."""
+    cats = taxonomy_categories()
+    gw = max((len(c.group) for c in cats), default=0)
+    kw = max((len(c.key) for c in cats), default=0)
+    tw = max((len(c.title) for c in cats), default=0)
+    for cat in cats:
+        out(
+            f"{cat.group:<{gw}}  {cat.key:<{kw}}  {cat.title:<{tw}}  "
+            f"{len(cat.queries)} queries"
+        )
+    out(f"{len(cats)} categories")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.list_categories:
+        print_taxonomy()
+        return 0
+
     auth_file = args.auth_file or SCRIPT_DIR / f"{args.auth_mode}.json"
+    dropped: list[tuple[str, int]] = []
+    started = time.monotonic()
 
     try:
         client = make_client(args.auth_mode, auth_file, args.client_id, args.client_secret)
-        ai_client = None if args.no_ai else make_ai_client(print)
         youtube_session = make_youtube_session(print) if args.youtube_api_key else None
-        print(f"Reading playlists from YouTube Music ({args.auth_mode} auth)…")
+        print(f"Reading from YouTube Music ({args.auth_mode} auth, --mode {args.mode})…")
         bank = build_bank(
             client,
             BuildOptions(
@@ -1087,17 +1285,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=args.seed,
                 community_playlists=args.community_playlists,
                 community_searches=args.community_searches,
-                categories=args.categories,
-                no_ai=args.no_ai,
                 youtube_api_key=args.youtube_api_key,
                 no_library=args.no_library,
+                mode=args.mode,
+                category_filters=args.category_filters,
+                max_playlists_per_category=args.max_playlists_per_category,
+                per_query_results=args.per_query_results,
+                min_category_songs=args.min_category_songs,
+                max_songs_per_category=args.max_songs_per_category,
+                sleep_ms=args.sleep_ms,
             ),
-            ai_client=ai_client,
             youtube_session=youtube_session,
+            dropped=dropped,
         )
     except BuildError as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         return 1
+
+    elapsed = time.monotonic() - started
 
     total = sum(len(c["questions"]) for c in bank["categories"])
     print("\nCategory summary:")
@@ -1106,16 +1311,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"  {cat['title']:<{width}}  {len(cat['questions'])} songs")
     print(f"  {'TOTAL':<{width}}  {total} songs in {len(bank['categories'])} categories")
 
-    ai_used = any(str(c.get("id", "")).startswith("cat_ai_") for c in bank["categories"])
-    if ai_used:
-        print(f"Categories: AI-generated ({os.environ.get('ANTHROPIC_MODEL') or DEFAULT_MODEL})")
-    else:
-        print("Categories: one per playlist (no AI)")
-    print(f"Embeddable pre-check: {'ran' if args.youtube_api_key else 'skipped (not requested)'}")
+    if dropped:
+        print(f"\nDropped {len(dropped)} category/categories below --min-category-songs "
+              f"({args.min_category_songs}):")
+        dwidth = max(len(t) for t, _ in dropped)
+        for title, count in dropped:
+            print(f"  {title:<{dwidth}}  {count} songs — not enough real content found")
+
+    print(f"\nMode: {args.mode}")
+    if args.mode == "playlists":
+        print(
+            f"Embeddable pre-check: {'ran' if args.youtube_api_key else 'skipped (not requested)'}"
+        )
+    print(f"Elapsed: {elapsed:.1f}s")
 
     if args.dry_run:
         print("\n--dry-run: nothing written.")
         return 0
+
+    if args.merge and args.out.exists():
+        try:
+            existing = json.loads(args.out.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"\nerror: --merge could not read {os.fspath(args.out)}: {exc}", file=sys.stderr)
+            return 1
+        before = len(existing.get("categories") or [])
+        bank = merge_bank(existing, bank)
+        print(
+            f"\n--merge: {before} existing categories + this run "
+            f"-> {len(bank['categories'])} categories"
+        )
 
     write_bank(bank, args.out)
     print(f"\nWrote {os.fspath(args.out)}")
