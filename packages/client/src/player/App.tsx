@@ -3,6 +3,7 @@ import { useGame } from '../common/useGame.js';
 import { store } from '../common/store.js';
 import { initCast, isCastSupported, type CastController } from '../common/cast.js';
 import { useWakeLock } from '../common/useWakeLock.js';
+import { MuteToggle } from '../common/ui.js';
 import {
   BuzzScreen,
   GameOver,
@@ -65,6 +66,7 @@ export default function App() {
   if (joined) {
     return (
       <>
+        <MuteToggle />
         <InGame />
         <VersionTag version={config?.appVersion} />
       </>
@@ -73,10 +75,13 @@ export default function App() {
 
   return (
     <div className="app center">
+      <MuteToggle />
       <div className="stack" style={{ width: '100%' }}>
         <div className="center-text stack">
-          <div className="title">🎵 Setlist</div>
-          <div className="muted">Buzz in on your phone · scores on the TV</div>
+          <img className="wordmark" src="/img/wordmark.png" alt="Setlist" />
+          <div>
+            <span className="tagline">Guess the song · win the night</span>
+          </div>
         </div>
         {g.error && <ErrorBanner message={g.error} />}
         {view === 'landing' && (

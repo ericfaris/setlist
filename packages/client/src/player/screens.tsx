@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { youtubeMusicUrl, type PrivateState, type PublicRoom } from '@setlist/shared';
 import { store } from '../common/store.js';
 import { nameOf } from '../common/ui.js';
+import { playSfx } from '../common/sfx.js';
 
 function me(pub: PublicRoom, priv: PrivateState) {
   return pub.players.find((p) => p.id === priv.playerId) ?? null;
@@ -274,6 +275,7 @@ export function OnDeckScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateStat
             // open it via window.open() (not a plain link) so we keep a handle
             // to the tab and can close it later when the host judges or moves on.
             onClick={() => {
+              playSfx('arm');
               store.openSongWindow(youtubeMusicUrl(song.videoId));
               setArming(true);
               void store.startSong(song.songId).finally(() => setArming(false));
@@ -299,9 +301,18 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
   // never render "you won the race" from local state.
   const [sent, setSent] = useState(false);
 
+  const lockedByMe = pub.active?.lockedPlayerId === priv.playerId;
+  // A private "you're in!" cue on the phone that won the race — the room-wide
+  // lock chime is the TV's job, this is just for the thumb that got there first.
+  useEffect(() => {
+    if (lockedByMe) {
+      playSfx('lock');
+      navigator.vibrate?.([20, 40, 20]);
+    }
+  }, [lockedByMe]);
+
   if (!active) return null;
   const lockedBy = active.lockedPlayerId;
-  const lockedByMe = lockedBy === priv.playerId;
   const lockedOut = active.lockedOutPlayerIds.includes(priv.playerId ?? '');
 
   let cls = 'buzz';
@@ -364,6 +375,8 @@ export function BuzzScreen({ pub, priv }: { pub: PublicRoom; priv: PrivateState 
         // wire, and this is a race.
         onPointerDown={() => {
           if (disabled) return;
+          playSfx('buzz');
+          navigator.vibrate?.(35);
           setSent(true);
           void store.buzz().finally(() => setSent(false));
         }}

@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import QRCode from 'qrcode';
-import type { PublicRoom } from '@setlist/shared';
+import { ON_FIRE_STREAK, type PublicRoom } from '@setlist/shared';
 import { useGame } from '../common/useGame.js';
 import { store } from '../common/store.js';
-import { nameOf } from '../common/ui.js';
+import { MuteToggle, nameOf } from '../common/ui.js';
+import { playSfx } from '../common/sfx.js';
 
 /** Small corner tag so a host can tell which build is live on the TV. Pinned
  * bottom-left so it never collides with the persistent join QR (bottom-right). */
@@ -58,6 +59,7 @@ export default function App() {
   const g = useGame();
   const [baseUrl, setBaseUrl] = useState(window.location.origin);
   const [appVersion, setAppVersion] = useState('');
+  const [toasts, setToasts] = useState<{ id: string; text: string }[]>([]);
 
   // Resolve base URL for QR codes; Cast and ?code= are handled in main.tsx.
   useEffect(() => {
@@ -74,12 +76,39 @@ export default function App() {
     if (fromQuery) void store.receiverSubscribe(fromQuery);
   }, []);
 
+  // "On fire" toast: fires once per player, exactly when their streak first
+  // CROSSES the threshold (not on every correct answer after — the flame ring
+  // on their chip, below, is the ongoing signal for that). Lives up here
+  // rather than inside Scores: Scores is nested in whichever *TV component the
+  // phase is currently rendering, so it remounts fresh on every phase change
+  // and would forget a player is already on fire, re-toasting them on the
+  // next reveal.
+  const prevStreaks = useRef<Map<string, number>>(new Map());
+  useEffect(() => {
+    const players = g.pub?.players ?? [];
+    const prev = prevStreaks.current;
+    for (const p of players) {
+      const before = prev.get(p.id) ?? 0;
+      if (p.streak >= ON_FIRE_STREAK && before < ON_FIRE_STREAK) {
+        const id = `${p.id}-${Date.now()}`;
+        setToasts((t) => [...t, { id, text: `🔥 ${p.displayName} is on fire!` }]);
+        playSfx('streak');
+        setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3500);
+      }
+      prev.set(p.id, p.streak);
+    }
+  }, [g.pub?.players]);
+
   let content: ReactNode;
   if (!g.pub) {
     const castError = (window as any).__castInitError as string | null;
     content = (
       <div className="tv center">
-        <div className="huge">🎵 SETLIST</div>
+        <img
+          src="/img/wordmark.png"
+          alt="Setlist"
+          style={{ width: '46vw', mixBlendMode: 'multiply', transform: 'rotate(-1.5deg)' }}
+        />
         <div className="sub">Waiting for a room…</div>
         {castError && (
           <div className="muted" style={{ fontSize: '1.2vw', color: 'red', marginTop: '1vw' }}>
@@ -110,8 +139,25 @@ export default function App() {
     <>
       {content}
       {g.pub && g.pub.phase !== 'LOBBY' && <MiniJoinQr pub={g.pub} baseUrl={baseUrl} />}
+      <MuteToggle corner="tr" />
       <VersionTag version={appVersion} />
+      <OnFireToasts toasts={toasts} />
     </>
+  );
+}
+
+/** Stacks top-center, above everything, on every screen — a streak doesn't
+ * pause for whatever phase the board happens to be in. */
+function OnFireToasts({ toasts }: { toasts: { id: string; text: string }[] }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((t) => (
+        <div key={t.id} className="toast">
+          {t.text}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -124,12 +170,20 @@ function Scores({ pub }: { pub: PublicRoom }) {
   const best = Math.max(0, ...contestants.map((p) => p.score));
   return (
     <div className="scores">
-      {contestants.map((p) => (
-        <div key={p.id} className={`scorecard${p.score === best && best > 0 ? ' leader' : ''}`}>
-          <div className="nm">{p.displayName}</div>
-          <div className="sc">{p.score}</div>
-        </div>
-      ))}
+      {contestants.map((p) => {
+        const onFire = p.streak >= ON_FIRE_STREAK;
+        return (
+          <div
+            key={p.id}
+            className={`scorecard${p.score === best && best > 0 ? ' leader' : ''}${onFire ? ' on-fire' : ''}`}
+          >
+            {/* Decoration only — the score itself is untouched below. */}
+            {onFire && <span className="flame-badge">🔥</span>}
+            <div className="nm">{p.displayName}</div>
+            <div className="sc">{p.score}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -145,7 +199,11 @@ function LobbyTV({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
 
   return (
     <div className="tv">
-      <div className="brand">🎵 SETLIST</div>
+      <img
+        src="/img/wordmark.png"
+        alt="Setlist"
+        style={{ width: '28vw', mixBlendMode: 'multiply', transform: 'rotate(-1.5deg)' }}
+      />
       <div className="spread" style={{ flex: 1 }}>
         <div className="stack center-text">
           <div style={{ fontSize: '2vw' }} className="muted">
@@ -172,13 +230,6 @@ function LobbyTV({ pub, baseUrl }: { pub: PublicRoom; baseUrl: string }) {
       </div>
     </div>
   );
-}
-
-/** Fire-and-forget one-shot SFX. Swallows autoplay-policy rejections — a TV
- * that never got a user gesture simply plays no chime, which is not worth
- * blocking anything on. */
-function playOneShot(src: string): void {
-  new Audio(src).play().catch(() => undefined);
 }
 
 function RoundSetupTV({ pub }: { pub: PublicRoom }) {
@@ -218,8 +269,28 @@ function OnDeckTV({ pub }: { pub: PublicRoom }) {
 
 function ArmedTV({ pub }: { pub: PublicRoom }) {
   const a = pub.active;
-  if (!a) return null;
   const locked = pub.phase === 'LOCKED';
+
+  // Buzz-in chime: lets everyone in the room know the board just locked,
+  // without them having to glance up. Fires once per lock (keyed on who
+  // locked it in — clears back to null between locks on the same question).
+  useEffect(() => {
+    if (locked) playSfx('lock');
+  }, [a?.lockedPlayerId, locked]);
+
+  // Wrong-answer chime: the host judged someone out and the round re-armed
+  // with buzzers still open (right/nobody-left cases go to REVEAL instead —
+  // see the correct/nobodyGotIt chimes in RevealTV). lockedOutPlayerIds only
+  // grows, so an increase — not just the phase flipping back to ARMED, which
+  // also happens once at the very start of a fresh question — is the signal.
+  const lockedOutCount = a?.lockedOutPlayerIds.length ?? 0;
+  const prevLockedOutCount = useRef(lockedOutCount);
+  useEffect(() => {
+    if (lockedOutCount > prevLockedOutCount.current) playSfx('wrong');
+    prevLockedOutCount.current = lockedOutCount;
+  }, [lockedOutCount]);
+
+  if (!a) return null;
   return (
     <div className="tv">
       <div className="spread">
@@ -248,8 +319,22 @@ function RevealTV({ pub }: { pub: PublicRoom }) {
   // it fires exactly once per question.
   const nobodyGotIt = !!a && !a.lockedPlayerId && !a.verdict;
   useEffect(() => {
-    if (nobodyGotIt) playOneShot('/sounds/times-up.mp3');
+    if (nobodyGotIt) playSfx('wrong');
   }, [a?.songId, nobodyGotIt]);
+  // Correct-answer chime: whoever locked in got at least title or artist.
+  // Also keyed on songId — the verdict object is new every question, so
+  // without the songId key this would refire on unrelated re-renders once a
+  // question resolves correct and then just sits in REVEAL.
+  const anyCorrect = !!a?.verdict && (a.verdict.titleCorrect || a.verdict.artistCorrect);
+  useEffect(() => {
+    if (anyCorrect) playSfx('correct');
+  }, [a?.songId, anyCorrect]);
+  // The reveal sting fires once per question, right as the card flips up —
+  // whether or not anyone got it (the correct/wrong cues layer on top).
+  useEffect(() => {
+    playSfx('reveal');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a?.songId]);
   // Server-proxied, keyed on the public songId — the videoId that drives it
   // never reaches this client. See /api/art in the server. A song this thin
   // bank doesn't have art for 404s; just hide it, don't show a broken image.
