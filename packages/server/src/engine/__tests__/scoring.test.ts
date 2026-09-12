@@ -5,6 +5,7 @@ import { SONG_POINT_VALUE } from '@setlist/shared';
 import {
   checkInvariants,
   armNext,
+  playAndAdvance,
   resetInvariantMemory,
   startedGame,
 } from './harness.js';
@@ -91,5 +92,30 @@ describe('scoring', () => {
     expect(engine.room.players.find((p) => p.id === seats[1]!.id)!.score).toBe(
       SONG_POINT_VALUE + HALF,
     );
+  });
+
+  // Powers the TV's "on fire" flame ring + toast (see ON_FIRE_STREAK).
+  it('tracks a consecutive-correct streak per player, any miss resetting it to 0', () => {
+    const { engine, seats } = startedGame(107, 2);
+    const streak = () => engine.room.players.find((p) => p.id === seats[1]!.id)!.streak;
+
+    playAndAdvance(engine, seats[0]!.id, seats[1]!.id, { titleCorrect: true, artistCorrect: true });
+    expect(streak()).toBe(1);
+    // Partial credit (title-only/artist-only) still counts as "correct" for
+    // the streak, same as it does for scoring.
+    playAndAdvance(engine, seats[0]!.id, seats[1]!.id, { titleCorrect: true, artistCorrect: false });
+    expect(streak()).toBe(2);
+    playAndAdvance(engine, seats[0]!.id, seats[1]!.id, { titleCorrect: true, artistCorrect: true });
+    expect(streak()).toBe(3);
+    playAndAdvance(engine, seats[0]!.id, seats[1]!.id, { titleCorrect: false, artistCorrect: false });
+    expect(streak()).toBe(0);
+  });
+
+  it('resets every streak on rematch, same as score', () => {
+    const { engine, seats } = startedGame(108, 2);
+    playAndAdvance(engine, seats[0]!.id, seats[1]!.id, { titleCorrect: true, artistCorrect: true });
+    expect(engine.room.players.find((p) => p.id === seats[1]!.id)!.streak).toBe(1);
+    expect(engine.rematch(seats[0]!.id)).toEqual({ ok: true });
+    expect(engine.room.players.every((p) => p.streak === 0)).toBe(true);
   });
 });

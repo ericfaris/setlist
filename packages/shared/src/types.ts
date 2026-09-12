@@ -30,6 +30,7 @@ export interface Player {
   isHost: boolean; // exactly one at a time; transferable (see engine.transferHost)
   canHostCast: boolean; // this device reported Cast Sender support (Chrome)
   score: number; // may go negative when penalizeWrongAnswers is on
+  streak: number; // consecutive correct judges; any wrong judge resets it to 0
   joinOrder: number; // monotonically increasing; drives host succession order
   pendingJoin: boolean; // joined mid-game; plays from the next question on
 }
@@ -144,3 +145,6 @@ export const SONGS_PER_CATEGORY_PER_ROUND = 5;
 /** The host never buzzes, so a solo game has nobody who could answer. */
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 10;
+/** Consecutive correct judges before a player's scorecard is "on fire" (TV
+ * flame animation + toast). Any wrong judge resets a player's streak to 0. */
+export const ON_FIRE_STREAK = 3;

@@ -188,6 +188,7 @@ export class GameEngine {
       isHost: noHostYet,
       canHostCast: canCast ?? false,
       score: 0,
+      streak: 0,
       joinOrder: this.joinCounter++,
       // A mid-game joiner sits out the question in flight, then plays from the
       // next one (promoted in nextQuestion()).
@@ -249,6 +250,7 @@ export class GameEngine {
 
     for (const p of this.room.players) {
       p.score = 0;
+      p.streak = 0;
       p.pendingJoin = false;
     }
     this.room.winnerPlayerIds = [];
@@ -506,6 +508,9 @@ export class GameEngine {
     }
 
     buzzer.score += awarded;
+    // Streak counts title-only/artist-only as correct too, same as scoring —
+    // any recognition keeps the fire alive; only a clean miss breaks it.
+    buzzer.streak = anyCorrect ? buzzer.streak + 1 : 0;
     active.verdict = verdict;
     active.awarded = awarded;
 
@@ -593,6 +598,7 @@ export class GameEngine {
     this.room.phaseBeforePause = null;
     for (const p of this.room.players) {
       p.score = 0;
+      p.streak = 0;
       p.pendingJoin = false;
     }
     return ok;

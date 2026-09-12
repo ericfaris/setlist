@@ -152,43 +152,50 @@ ERA_CATEGORIES: tuple[tuple[str, str, str], ...] = (
 )
 
 OLDIES_QUERIES: tuple[str, ...] = (
-    "oldies 50s 60s",
-    "60s oldies",
-    "50s and 60s hits",
-    "oldies party playlist",
+    "billboard hot 100 1950s 1960s hits",
+    "american top 40 oldies",
+    "now thats what i call oldies",
+    "billboard number one hits 50s 60s",
 )
 
 SPECIAL_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "Boy Bands/Girl Groups",
         (
-            "boy band hits",
-            "girl group hits",
-            "best boy bands playlist",
-            "90s boy bands and girl groups",
+            "billboard greatest boy band hits",
+            "vh1 100 greatest boy bands and girl groups",
+            "billboard hot 100 girl group hits",
+            "now thats what i call boy bands",
         ),
     ),
     (
         "Solo Artists",
         (
-            "biggest solo artist hits",
-            "solo pop stars playlist",
-            "greatest solo hits of all time",
-            "iconic solo artists",
+            "billboard hot 100 solo artist hits",
+            "vh1 100 greatest solo artists",
+            "rolling stone greatest solo artists",
+            "greatest solo hits of all time billboard",
         ),
     ),
     (
         "One-Hit Wonders",
         (
-            "one hit wonders",
-            "best one hit wonders playlist",
-            "80s one hit wonders",
-            "90s one hit wonders",
+            "billboard one hit wonders",
+            "vh1 100 greatest one hit wonders",
+            "one hit wonders billboard hot 100",
+            "greatest one hit wonders of all time",
         ),
     ),
 )
 
 
+# Queries are deliberately brand/chart-flavored ("Billboard Hot 100", "NOW
+# That's What I Call Music", "VH1 100 Greatest", "American Top 40") rather than
+# generic "best X songs" wording. YT Music's community_playlists search treats
+# the query as free text — it doesn't require an exact match — so these
+# strings just steer results toward the kind of widely-recognized chart
+# compilation everyone's heard of, away from one curator's personal-taste
+# deep cuts. See the "broad hits, not obscure" bank-build request.
 def _genre_defs() -> tuple[CategoryDef, ...]:
     return tuple(
         CategoryDef(
@@ -196,10 +203,10 @@ def _genre_defs() -> tuple[CategoryDef, ...]:
             title=title,
             group="genre",
             queries=(
-                f"best {token} songs",
-                f"{token} hits playlist",
-                f"ultimate {token} playlist",
-                f"top {token} songs of all time",
+                f"billboard hot 100 {token} hits",
+                f"now thats what i call {token}",
+                f"iheartradio top 100 {token}",
+                f"greatest {token} hits of all time",
             ),
         )
         for slug, title, token in PLAIN_GENRES
@@ -211,16 +218,16 @@ def _decade_queries(decade: str, token: str) -> tuple[str, ...]:
     # templates rather than a special case buried in the loop.
     if decade == "Today's":
         return (
-            f"2020s {token} hits",
-            f"todays {token} hits",
-            f"new {token} hits 2020s",
-            f"current {token} hits",
+            f"billboard hot 100 {token} 2020s",
+            f"iheartradio top 100 {token} now",
+            f"current {token} hits chart",
+            f"top 40 {token} radio hits",
         )
     return (
-        f"{decade} {token} hits",
-        f"best {decade} {token} songs",
-        f"{decade} {token} playlist",
-        f"ultimate {decade} {token}",
+        f"billboard {decade} {token} hits",
+        f"now thats what i call {decade} {token}",
+        f"american top 40 {decade} {token}",
+        f"vh1 100 greatest {decade} {token} songs",
     )
 
 

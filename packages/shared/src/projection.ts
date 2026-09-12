@@ -30,6 +30,7 @@ export interface PublicPlayer {
   isHost: boolean;
   canHostCast: boolean;
   score: number;
+  streak: number; // consecutive correct judges — see ON_FIRE_STREAK in types.ts
   joinOrder: number;
   pendingJoin: boolean;
 }

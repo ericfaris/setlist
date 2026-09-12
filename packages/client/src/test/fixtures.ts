@@ -18,6 +18,7 @@ export function makePlayer(overrides: Partial<PublicPlayer> & { id: string }): P
     isHost: false,
     canHostCast: false,
     score: 0,
+    streak: 0,
     joinOrder: 0,
     pendingJoin: false,
     ...overrides,

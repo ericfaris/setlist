@@ -100,6 +100,7 @@ export function toPublicRoom(room: GameRoom, now: number): PublicRoom {
       isHost: p.isHost,
       canHostCast: p.canHostCast,
       score: p.score,
+      streak: p.streak,
       joinOrder: p.joinOrder,
       pendingJoin: p.pendingJoin,
     })),
