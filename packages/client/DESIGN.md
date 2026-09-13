@@ -9,6 +9,13 @@ Source of truth: `src/common/styles.css` (tokens + components),
 `src/common/sfx.ts` (sound bus). Fonts are loaded in `index.html` /
 `receiver.html`.
 
+**Live showcase**: [`design-system.html`](./design-system.html) — every
+color token, type step, spacing/radius/shadow/motion token, component
+variant/state, background asset and sound cue rendered from the real
+stylesheet and real files (not a mockup). Open it with `npm run dev` at
+`/design-system.html`, or it's built as its own entry (alongside the player
+and receiver) so it ships at that path in production too.
+
 ## Palette
 
 | Token | Hex | Use |
@@ -86,3 +93,19 @@ Images: Ideogram (`mcp__ideogram__generate_image`). Sounds: ElevenLabs
 `sfx` nodes (`eleven_text_to_sound_v2`), then
 `ffmpeg -af silenceremove,loudnorm=I=-16:TP=-1.5 -ac 1 -b:a 96k`.
 See the global `design-uplift` skill.
+
+## Changelog
+
+- **2026-09-13** — Batch `ui-design` uplift pass. The system itself (tokens,
+  fonts, components, texture, sound, favicon/wordmark) was already complete
+  and cohesive from the original "Xerox Mixtape Zine" build — this pass
+  re-verified it against the skill's checklist rather than proposing a new
+  direction (no mood-board regeneration was warranted: the existing
+  direction already reads as a bold, specific, well-differentiated aesthetic
+  with a real reference concept — a photocopied mixtape j-card — executed
+  consistently across every surface, and there was no conflicting or
+  half-finished identity to reconcile). What was missing and got built: the
+  static showcase page (`design-system.html`), wired as a third Vite build
+  entry alongside `index.html`/`receiver.html` so it ships at
+  `/design-system.html` in both dev and production, plus this changelog
+  section. No tokens, components, or assets changed.

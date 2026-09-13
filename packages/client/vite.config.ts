@@ -18,6 +18,7 @@ export default defineConfig({
       input: {
         player: resolve(__dirname, 'index.html'),
         receiver: resolve(__dirname, 'receiver.html'),
+        designSystem: resolve(__dirname, 'design-system.html'),
       },
     },
   },

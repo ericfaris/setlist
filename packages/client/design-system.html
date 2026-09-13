@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4e8d0" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700&family=Archivo+Black&family=Permanent+Marker&display=swap"
+      rel="stylesheet"
+    />
+    <!-- The real, shipped stylesheet — every token/component below is rendered
+         from this file, not redrawn. If styles.css drifts, this page drifts
+         with it, which is the point. -->
+    <link rel="stylesheet" href="/src/common/styles.css" />
+    <title>Setlist — Design System</title>
+    <style>
+      /* Showcase-only chrome. None of this is part of the app's design
+         system — it just arranges swatches/specimens on the page using the
+         app's own tokens (var(--ink), var(--edge), etc.) wherever it can, so
+         even the showcase's own furniture stays in-family. */
+      .ds-wrap { max-width: 1040px; margin: 0 auto; padding: 32px 20px 100px; }
+      .ds-hero { text-align: center; margin-bottom: 10px; }
+      .ds-hero img { width: min(360px, 70%); margin: 0 auto 14px; display: block; }
+      .ds-sub { max-width: 640px; margin: 6px auto 0; text-align: center; }
+      .ds-section { margin-top: 56px; }
+      .ds-section > h2.title { font-size: 1.7rem; margin-bottom: 4px; }
+      .ds-section > p.muted { margin-top: 0; margin-bottom: 20px; max-width: 720px; }
+      .ds-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+      .ds-swatch {
+        border: var(--edge);
+        border-radius: var(--radius);
+        box-shadow: var(--pop);
+        background: var(--paper-2);
+        overflow: hidden;
+      }
+      .ds-swatch .fill { height: 72px; }
+      .ds-swatch .meta { padding: 8px 10px; font-family: 'Archivo', system-ui, sans-serif; }
+      .ds-swatch .meta .tok { font-family: 'Archivo Black', system-ui, sans-serif; font-size: 0.78rem; text-transform: uppercase; }
+      .ds-swatch .meta .hex { font-size: 0.78rem; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+      .ds-swatch .meta .role { font-size: 0.72rem; color: var(--ink-soft); margin-top: 2px; }
+      .ds-type-row { display: flex; align-items: baseline; gap: 18px; margin-bottom: 20px; flex-wrap: wrap; }
+      .ds-type-row .spec { min-width: 190px; font-family: 'Archivo', system-ui, sans-serif; font-size: 0.8rem; color: var(--ink-soft); }
+      .ds-type-row .spec b { color: var(--ink); display: block; font-family: 'Archivo Black', system-ui, sans-serif; font-size: 0.78rem; text-transform: uppercase; }
+      .ds-scale-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+      .ds-scale-box { background: var(--cyan); border: var(--edge); box-shadow: 2px 2px 0 var(--ink); }
+      .ds-scale-label { font-family: 'Archivo', system-ui, sans-serif; font-size: 0.75rem; margin-top: 6px; color: var(--ink-soft); }
+      .ds-radius-box { background: var(--yellow); border: var(--edge); box-shadow: 2px 2px 0 var(--ink); width: 72px; height: 72px; }
+      .ds-shadow-card { background: var(--paper-2); border: var(--edge); padding: 20px; text-align: center; font-family: 'Archivo Black', system-ui, sans-serif; text-transform: uppercase; font-size: 0.8rem; }
+      .ds-motion-card {
+        background: var(--paper-2); border: var(--edge); box-shadow: var(--pop);
+        padding: 16px; text-align: center; cursor: pointer; user-select: none;
+        font-family: 'Archivo Black', system-ui, sans-serif; text-transform: uppercase; font-size: 0.85rem;
+        transition: transform 0.08s var(--ease-snap), box-shadow 0.08s var(--ease-snap);
+      }
+      .ds-motion-card:active { transform: translate(4px, 4px); box-shadow: 0 0 0 var(--ink); }
+      .ds-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+      .ds-state-label { font-size: 0.72rem; text-align: center; margin-top: 6px; color: var(--ink-soft); font-family: 'Archivo', system-ui, sans-serif; }
+      .ds-col { display: flex; flex-direction: column; align-items: center; }
+      .ds-texture-sample { width: 220px; height: 140px; border: var(--edge); box-shadow: var(--pop); background-size: cover; background-position: center; }
+      .ds-tv-preview { background: var(--paper) url('/img/tv-bg.png') center / cover no-repeat; border: var(--edge); box-shadow: var(--pop-lg); padding: 20px; border-radius: var(--radius); }
+      .ds-sound-row { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: var(--edge); border-radius: var(--radius); background: var(--paper-2); box-shadow: 2px 2px 0 var(--ink); margin-bottom: 8px; }
+      .ds-sound-row .cue { font-family: 'Archivo Black', system-ui, sans-serif; text-transform: uppercase; font-size: 0.85rem; min-width: 90px; }
+      .ds-sound-row .when { font-family: 'Archivo', system-ui, sans-serif; font-size: 0.8rem; color: var(--ink-soft); flex: 1; }
+      .ds-asset-fig { text-align: center; }
+      .ds-asset-fig img { max-width: 100%; border: var(--edge); box-shadow: var(--pop); background: #fff; }
+      .ds-asset-fig figcaption { margin-top: 6px; font-size: 0.75rem; color: var(--ink-soft); font-family: 'Archivo', system-ui, sans-serif; }
+      .ds-toc { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 18px; }
+      .ds-toc a {
+        font-family: 'Archivo Black', system-ui, sans-serif; text-transform: uppercase; font-size: 0.7rem;
+        text-decoration: none; color: var(--ink); background: var(--paper-2); border: 2px solid var(--ink);
+        border-radius: 999px; padding: 5px 12px; box-shadow: 2px 2px 0 var(--ink);
+      }
+      .ds-toc a:hover { background: var(--yellow); }
+      footer.ds-foot { text-align: center; margin-top: 70px; }
+    </style>
+  </head>
+  <body>
+    <div class="app ds-wrap">
+      <header class="ds-hero">
+        <img src="/img/wordmark.png" alt="Setlist wordmark" />
+        <span class="tagline">Design System — Xerox Mixtape Zine</span>
+        <p class="muted small ds-sub">
+          Every swatch, type step, and component on this page is rendered live
+          from <code>src/common/styles.css</code> — the same stylesheet the
+          player and TV surfaces load. Nothing here is redrawn or
+          hand-matched; if the tokens change, this page changes with them.
+        </p>
+        <nav class="ds-toc">
+          <a href="#color">Color</a>
+          <a href="#type">Type</a>
+          <a href="#spacing">Spacing &amp; Radius</a>
+          <a href="#shadow">Shadow</a>
+          <a href="#motion">Motion</a>
+          <a href="#buttons">Buttons</a>
+          <a href="#inputs">Inputs</a>
+          <a href="#cards">Cards &amp; Pills</a>
+          <a href="#buzzer">Buzzer</a>
+          <a href="#tv">TV</a>
+          <a href="#texture">Texture &amp; Art</a>
+          <a href="#sound">Sound</a>
+        </nav>
+      </header>
+
+      <!-- ============ COLOR ============ -->
+      <section class="ds-section" id="color">
+        <h2 class="title">Color</h2>
+        <p class="muted">
+          Warm cream paper with three loud ink colours doing all the work.
+          Every swatch fill below is the literal token value, read straight
+          from <code>:root</code> in styles.css.
+        </p>
+        <div class="ds-grid" id="color-grid"></div>
+      </section>
+
+      <!-- ============ TYPE ============ -->
+      <section class="ds-section" id="type">
+        <h2 class="title">Type</h2>
+        <p class="muted">
+          Permanent Marker for display, Archivo Black for labels/controls
+          (always uppercase), Archivo for body copy. Original Salmon is kept
+          as a fallback face on the reveal screen only.
+        </p>
+
+        <div class="ds-type-row">
+          <div class="spec"><b>.title</b>2.4rem · Permanent Marker · 400<br />misprint text-shadow (cyan/red)</div>
+          <div class="title">Setlist night!</div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>.h2</b>1.15rem · Archivo Black · uppercase</div>
+          <div class="h2">Round 2 · 90s Grunge</div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>body</b>1rem · Archivo · 400</div>
+          <div>The first buzz the server receives wins.</div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>.muted</b>1rem · Archivo · ink-soft</div>
+          <div class="muted">Waiting for the host to arm the buzzers…</div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>.small</b>0.85rem · Archivo</div>
+          <div class="small">Round 1 · song 3 of 5</div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>tv .huge</b>9vw · Permanent Marker<br />(scaled down here for print)</div>
+          <div class="tv" style="position: static; width: auto; height: auto; padding: 0; background: none; overflow: visible;">
+            <div class="huge" style="font-size: 3.2rem;">4821</div>
+          </div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>tv .sub</b>2.6vw · Archivo Black · uppercase</div>
+          <div class="tv" style="position: static; width: auto; height: auto; padding: 0; background: none; overflow: visible;">
+            <div class="sub" style="font-size: 1rem;">Scan to join</div>
+          </div>
+        </div>
+        <div class="ds-type-row">
+          <div class="spec"><b>Original Salmon</b>fallback face, reveal only</div>
+          <div style="font-family: 'Original Salmon', 'Permanent Marker', sans-serif; font-size: 1.8rem;">Bohemian Rhapsody</div>
+        </div>
+      </section>
+
+      <!-- ============ SPACING / RADIUS ============ -->
+      <section class="ds-section" id="spacing">
+        <h2 class="title">Spacing &amp; Radius</h2>
+        <p class="muted">Layout runs on flex utilities (<code>.stack</code>/<code>.row</code>/<code>.spread</code>) with ad-hoc gaps rather than a strict numeric scale — the gaps in real use cluster at these steps.</p>
+        <div class="ds-scale-row" id="spacing-row"></div>
+        <p class="muted small" style="margin-top: 24px;"><b style="font-family:'Archivo Black',sans-serif;">--radius</b> = <code>6px</code>, used on every card, button, input and chip.</p>
+        <div class="ds-row">
+          <div class="ds-col">
+            <div class="ds-radius-box" style="border-radius: var(--radius);"></div>
+            <div class="ds-scale-label">--radius (6px)</div>
+          </div>
+          <div class="ds-col">
+            <div class="ds-radius-box" style="border-radius: 999px;"></div>
+            <div class="ds-scale-label">pill (999px)</div>
+          </div>
+          <div class="ds-col">
+            <div class="ds-radius-box" style="border-radius: 50% / 30%;"></div>
+            <div class="ds-scale-label">buzzer (50%/30%)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SHADOW ============ -->
+      <section class="ds-section" id="shadow">
+        <h2 class="title">Shadow</h2>
+        <p class="muted">Hard ink drop-shadows, never blurred — a photocopy has no soft light.</p>
+        <div class="ds-row">
+          <div class="ds-col">
+            <div class="ds-shadow-card" style="box-shadow: var(--pop);">--pop<br />4px 4px 0</div>
+            <div class="ds-scale-label">buttons, chips, scorerows</div>
+          </div>
+          <div class="ds-col">
+            <div class="ds-shadow-card" style="box-shadow: var(--pop-lg);">--pop-lg<br />7px 7px 0</div>
+            <div class="ds-scale-label">cards</div>
+          </div>
+          <div class="ds-col">
+            <div class="ds-shadow-card" style="box-shadow: inset 2px 2px 0 rgba(26,26,26,.08);">inset<br />2px 2px 0</div>
+            <div class="ds-scale-label">inputs</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ MOTION ============ -->
+      <section class="ds-section" id="motion">
+        <h2 class="title">Motion</h2>
+        <p class="muted">
+          Hard and physical: presses translate INTO the drop-shadow instead of
+          easing. <code>--ease-snap</code> = <code>cubic-bezier(.2,1.4,.4,1)</code>.
+          Click/press each card below to feel the real transition. Everything
+          collapses to ~0 under <code>prefers-reduced-motion</code>.
+        </p>
+        <div class="ds-row">
+          <div class="ds-col">
+            <div class="ds-motion-card">Press me<br />(--pop → 0, 0.08s)</div>
+            <div class="ds-scale-label">button / chip press</div>
+          </div>
+          <div class="ds-col">
+            <div class="card" style="animation: card-in 1.2s var(--ease-snap) both; cursor: default;">Reloads on page load</div>
+            <div class="ds-scale-label">card-in (0.34s, staggered)</div>
+          </div>
+          <div class="ds-col">
+            <button class="buzz" id="motion-buzz" style="height: 120px; min-height: 0; font-size: 1.1rem;">Press</button>
+            <div class="ds-scale-label">buzz-idle wobble / press-in</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ BUTTONS ============ -->
+      <section class="ds-section" id="buttons">
+        <h2 class="title">Buttons</h2>
+        <p class="muted">Ink border, hard shadow. <code>:active</code> translates 4px,4px into the shadow. Ghost is dashed with no shadow.</p>
+        <div class="ds-row wrap">
+          <button>Default</button>
+          <button class="primary">Primary</button>
+          <button class="good">Good</button>
+          <button class="bad">Bad</button>
+          <button class="ghost">Ghost</button>
+          <button disabled>Disabled</button>
+        </div>
+      </section>
+
+      <!-- ============ INPUTS ============ -->
+      <section class="ds-section" id="inputs">
+        <h2 class="title">Inputs</h2>
+        <p class="muted">Inset shadow at rest; cyan focus outline (tab into the field or click it).</p>
+        <div class="ds-row wrap" style="max-width: 480px;">
+          <div style="flex: 1; min-width: 200px;">
+            <input placeholder="Display name" value="Robin" />
+          </div>
+          <div style="flex: 1; min-width: 200px;">
+            <select>
+              <option>90s Grunge</option>
+              <option>Yacht Rock</option>
+              <option>One-Hit Wonders</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ CARDS & PILLS ============ -->
+      <section class="ds-section" id="cards">
+        <h2 class="title">Cards, Pills &amp; Banners</h2>
+        <p class="muted">Cards alternate ±0.5° rotation and stagger-fade on load — reload this page to see it. Pills are the round/category chips; banners and notices are full-width callouts.</p>
+        <div class="stack" style="max-width: 480px;">
+          <div class="card">
+            <div class="row spread">
+              <span class="h2">Lobby</span>
+              <span class="pill">4 players</span>
+            </div>
+            <p class="muted small">Waiting for the host to start round 1…</p>
+          </div>
+          <div class="card">
+            <div class="row wrap chiprow">
+              <span class="chip">90s Grunge</span>
+              <span class="chip">Yacht Rock</span>
+              <span class="chip">One-Hit Wonders</span>
+            </div>
+          </div>
+        </div>
+        <div class="stack" style="max-width: 480px; margin-top: 14px;">
+          <div class="banner">Wrong! −50 points.</div>
+          <div class="notice">Next up: Boy Bands / Girl Groups</div>
+        </div>
+        <div class="stack" style="max-width: 480px; margin-top: 14px;">
+          <div class="scorerow me"><span>You — Robin</span><b>350</b></div>
+          <div class="scorerow"><span>Sam</span><b>200</b></div>
+        </div>
+      </section>
+
+      <!-- ============ BUZZER ============ -->
+      <section class="ds-section" id="buzzer">
+        <h2 class="title">Buzzer — the signature control</h2>
+        <p class="muted">
+          Oversized red squashed-circle, halftone shading, idle wobble,
+          presses down 10px into its own drop. Recolours per state: locked
+          (someone else got there first), mine (I won it), out (wrong once,
+          waiting out this song).
+        </p>
+        <div class="ds-row wrap">
+          <div class="ds-col" style="width: 160px;">
+            <button class="buzz" style="height: 130px; min-height: 0; font-size: 1.2rem;">Buzz!</button>
+            <div class="ds-state-label">default</div>
+          </div>
+          <div class="ds-col" style="width: 160px;">
+            <button class="buzz locked" style="height: 130px; min-height: 0;" disabled>🔒 Sam buzzed in</button>
+            <div class="ds-state-label">.locked</div>
+          </div>
+          <div class="ds-col" style="width: 160px;">
+            <button class="buzz mine" style="height: 130px; min-height: 0;" disabled>You're in!</button>
+            <div class="ds-state-label">.mine</div>
+          </div>
+          <div class="ds-col" style="width: 160px;">
+            <button class="buzz out" style="height: 130px; min-height: 0;" disabled>Sit tight</button>
+            <div class="ds-state-label">.out</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TV ============ -->
+      <section class="ds-section" id="tv">
+        <h2 class="title">TV / Receiver</h2>
+        <p class="muted">Full-bleed <code>tv-bg.png</code>, taped index-card scorecards, leader star, on-fire flame sticker + glow.</p>
+        <!-- One real .tv ancestor (position/size overridden to sit inline in
+             the page instead of full-viewport) so every descendant selector
+             below (.tv .brand, .tv .scorecard, …) resolves exactly as it does
+             on the real receiver — children carry only their own class, never
+             "tv" themselves, since that class is what makes an element the
+             full-viewport TV root. -->
+        <div class="tv" style="position: static; width: 100%; height: auto; min-height: 260px; padding: 24px; overflow: visible;">
+          <div class="brand" style="align-self: flex-start; font-size: 1rem;">Setlist</div>
+          <div class="row" style="gap: 14px; margin-top: 14px; flex-wrap: wrap; align-items: flex-end;">
+            <div class="scorecard leader" style="font-size: 0.6rem;">
+              <div class="nm" style="font-size: 0.9rem;">Robin</div>
+              <div class="sc" style="font-size: 1.8rem;">350</div>
+            </div>
+            <div class="scorecard on-fire" style="font-size: 0.6rem;">
+              <span class="flame-badge" style="font-size: 1.3rem;">🔥</span>
+              <div class="nm" style="font-size: 0.9rem;">Sam</div>
+              <div class="sc" style="font-size: 1.8rem;">300</div>
+            </div>
+            <div class="scorecard" style="font-size: 0.6rem;">
+              <div class="nm" style="font-size: 0.9rem;">Alex</div>
+              <div class="sc" style="font-size: 1.8rem;">150</div>
+            </div>
+          </div>
+          <div class="row wrap players" style="gap: 10px; margin-top: 16px;">
+            <span class="pchip" style="font-size: 0.8rem;">Robin</span>
+            <span class="pchip" style="font-size: 0.8rem;">Sam</span>
+            <span class="pchip" style="font-size: 0.8rem;">Alex</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ TEXTURE & ART ============ -->
+      <section class="ds-section" id="texture">
+        <h2 class="title">Backgrounds, Texture &amp; Generated Art</h2>
+        <p class="muted">
+          Every surface sits on the same halftone dot-screen (CSS) plus a
+          scanned paper-grain multiply layer (<code>body::before</code> /
+          <code>body::after</code>) — that texture is already under this
+          whole page. Below are the generated raster assets at real size.
+        </p>
+        <div class="ds-row wrap">
+          <figure class="ds-asset-fig">
+            <img src="/img/wordmark.png" alt="Wordmark" style="width: 220px;" />
+            <figcaption>wordmark.png<br />hand-lettered logotype</figcaption>
+          </figure>
+          <figure class="ds-asset-fig">
+            <img src="/img/tv-bg.png" alt="TV background" style="width: 220px;" />
+            <figcaption>tv-bg.png<br />TV full-bleed backdrop</figcaption>
+          </figure>
+          <figure class="ds-asset-fig">
+            <img src="/img/paper-texture.png" alt="Paper texture" style="width: 220px;" />
+            <figcaption>paper-texture.png<br />scan-grain overlay (0.3 opacity, multiply)</figcaption>
+          </figure>
+          <figure class="ds-asset-fig">
+            <img src="/img/stickers.png" alt="Stickers sheet" style="width: 220px;" />
+            <figcaption>stickers.png<br />sticker sheet (flame, star, tape)</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <!-- ============ SOUND ============ -->
+      <section class="ds-section" id="sound">
+        <h2 class="title">Sound</h2>
+        <p class="muted">Lo-fi cassette register, generated with ElevenLabs. Room-wide cues live on the TV; phones only play the player's own private feedback.</p>
+        <div id="sound-list"></div>
+      </section>
+
+      <footer class="ds-foot">
+        <span class="pill">v1 — Xerox Mixtape Zine</span>
+        <p class="muted small">See <code>DESIGN.md</code> at the package root for the full narrative, rationale and asset inventory.</p>
+      </footer>
+    </div>
+
+    <script>
+      // Color grid: literal token values, declared here once so the labeled
+      // hex/role text stays readable (CSS custom properties don't expose
+      // their own source text to JS), but every fill color is applied via
+      // var(--token) so the *rendered* color always comes from styles.css.
+      var COLORS = [
+        ['--paper', '#F4E8D0', 'background — page'],
+        ['--paper-2', '#FFFDF7', 'surface — cards, inputs, chips'],
+        ['--paper-3', '#EAE0C8', 'surface — buzzer "out" state'],
+        ['--ink', '#1A1A1A', 'text, every border, every drop-shadow'],
+        ['--ink-soft', '#4A463C', 'muted text'],
+        ['--red / --accent / --bad', '#E63946', 'buzzer, errors, primary energy'],
+        ['--red-deep', '#A41E2A', 'buzzer base shadow'],
+        ['--yellow / --warn / --gold', '#FFD23F', 'primary buttons, tape, leader, tagline'],
+        ['--cyan', '#00B8C4', 'selection, focus rings, notices, misprint shadow'],
+        ['--green / --good', '#2F9E44', 'correct / "you\'re in"'],
+      ];
+      var grid = document.getElementById('color-grid');
+      COLORS.forEach(function (c) {
+        var el = document.createElement('div');
+        el.className = 'ds-swatch';
+        el.innerHTML =
+          '<div class="fill" style="background:' + c[1] + '"></div>' +
+          '<div class="meta"><div class="tok">' + c[0] + '</div>' +
+          '<div class="hex">' + c[1] + '</div>' +
+          '<div class="role">' + c[2] + '</div></div>';
+        grid.appendChild(el);
+      });
+
+      // Spacing scale actually used across styles.css gaps/paddings.
+      var SPACES = [4, 6, 8, 10, 12, 14, 16, 18, 20];
+      var srow = document.getElementById('spacing-row');
+      SPACES.forEach(function (px) {
+        var col = document.createElement('div');
+        col.className = 'ds-col';
+        col.innerHTML =
+          '<div class="ds-scale-box" style="width:' + px + 'px;height:' + px + 'px;"></div>' +
+          '<div class="ds-scale-label">' + px + 'px</div>';
+        srow.appendChild(col);
+      });
+
+      // Sound rows.
+      var SOUNDS = [
+        ['arm', 'arm.mp3', 'Host opens the song / arms buzzers', 'Host phone'],
+        ['buzz', 'buzz.mp3', 'Player presses their buzzer', 'Player phone'],
+        ['lock', 'lock.mp3', 'Board locks (room) / "you\'re in" (winner)', 'TV + winner phone'],
+        ['correct', 'correct.mp3', 'Verdict gives title or artist', 'TV'],
+        ['wrong', 'wrong.mp3', 'Wrong verdict / nobody got it', 'TV'],
+        ['reveal', 'reveal.mp3', 'Song revealed', 'TV'],
+        ['streak', 'streak.mp3', 'A player crosses the on-fire streak', 'TV'],
+      ];
+      var slist = document.getElementById('sound-list');
+      SOUNDS.forEach(function (s) {
+        var row = document.createElement('div');
+        row.className = 'ds-sound-row';
+        row.innerHTML =
+          '<span class="cue">' + s[0] + '</span>' +
+          '<audio controls preload="none" src="/sounds/' + s[1] + '" style="height:32px;"></audio>' +
+          '<span class="when">' + s[2] + ' &middot; <em>' + s[3] + '</em></span>';
+        slist.appendChild(row);
+      });
+
+      // The showcase's own buzz-press demo needs its idle wobble briefly
+      // paused so pressing/releasing is obviously the real .buzz:active rule
+      // and not just the ambient wobble animation.
+      var mb = document.getElementById('motion-buzz');
+      if (mb) {
+        mb.addEventListener('pointerdown', function () { mb.style.animationPlayState = 'paused'; });
+        mb.addEventListener('pointerup', function () { mb.style.animationPlayState = 'running'; });
+      }
+    </script>
+  </body>
+</html>
