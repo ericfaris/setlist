@@ -42,7 +42,7 @@ Environment rules (non-negotiable):
 - Python: **always** `scripts/questionbank/.venv/bin/python` and
   `scripts/questionbank/.venv/bin/pip`. Never bare `python`/`pip`.
   (venv: Python 3.12.3, `ytmusicapi` 1.12.1 already installed; `anthropic` is not.)
-- Node v24.14.0 / npm 11.9.0 are on `PATH`. All npm commands from the repo root.
+- Node v26.10.0 / npm 11.19.1 are on `PATH`. All npm commands from the repo root.
 - The app is **live** in Docker at `127.0.0.1:8900`. This feature does not require
   a redeploy; do **not** run `docker compose` anything. Deployment is a separate,
   explicitly-gated step the user triggers later.

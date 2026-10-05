@@ -4,7 +4,7 @@ Companion to `.claude/plans/song-substitution-brief.md` (read that first for the
 problem statement and acceptance criteria). This plan is self-contained: every
 file path is absolute-from-repo-root and every new symbol is named.
 
-Repo root: `/home/eric/projects/setlist`. Working tree is clean. Node v24.14.0
+Repo root: `/home/eric/projects/setlist`. Working tree is clean. Node v26.10.0
 (global `fetch` available — **do not add an HTTP dependency**). Commands from
 repo root: `npm run typecheck`, `npm test`, `npm run build`.
 

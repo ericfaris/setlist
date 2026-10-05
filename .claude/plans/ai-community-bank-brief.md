@@ -103,7 +103,7 @@ This is a **build-time, offline** feature — same as the rest of the builder. I
 ## Repo commands & tree state
 
 - **Repo root**: `/home/eric/projects/music-trivia`.
-- **Node**: v24.14.0, **npm**: 11.9.0, on `PATH` directly.
+- **Node**: v26.10.0, **npm**: 11.19.1, on `PATH` directly.
 - **Node commands**: `npm run typecheck` (workspaces), `npm test` (workspaces, `--if-present`), `npm run build`, `npm run dev` — all as established in prior sessions, unchanged.
 - **Python**: venv already exists at `scripts/questionbank/.venv` (Python 3.12.3, `ytmusicapi` 1.12.1 installed). Always invoke via `scripts/questionbank/.venv/bin/python` and `scripts/questionbank/.venv/bin/pip` — never bare `python`/`pip`. After adding `anthropic` to `requirements.txt`, install it with `scripts/questionbank/.venv/bin/pip install -r scripts/questionbank/requirements.txt`.
 - **Python test command**: `scripts/questionbank/.venv/bin/python -m unittest discover -s scripts/questionbank -v`.

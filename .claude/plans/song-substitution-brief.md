@@ -75,7 +75,7 @@ When a song fails to play mid-game (the receiver's `YT.Player` `onError` fires, 
 ## Repo commands & tree state
 
 - **Repo root**: `/home/eric/projects/setlist`. Working tree is **clean** (confirmed via `git status --short`, no output) — the previous feature (rename, AI question-bank pipeline, embeddable pre-check, board/reveal SFX) was already committed and deployed in an earlier session.
-- **Node**: v24.14.0 (has built-in global `fetch` — no new HTTP dependency needed), **npm**: on `PATH` directly.
+- **Node**: v26.10.0 (has built-in global `fetch` — no new HTTP dependency needed), **npm**: on `PATH` directly.
 - **Commands** (from repo root): `npm install`, `npm run build` (shared → client → server, in that order — shared must build first since server/client resolve `@setlist/shared` via its built `dist/`), `npm run typecheck` (workspaces), `npm test` (workspaces, `--if-present`), `npm run dev` (concurrent server+client dev servers).
 - **Live deployment**: Docker (`docker compose up -d --build`, image `ericfaris/setlist:latest`, container `setlist-app-1`, bound to `127.0.0.1:8900`), publicly reachable at `https://setlist.mooseflip.com` via a Cloudflare Tunnel (tunnel config is **remotely managed via the Cloudflare API**, not the local `/etc/cloudflared/config.yml` — already set up, no changes needed for this feature). `.env` at the repo root holds `YOUTUBE_API_KEY`, `ANTHROPIC_API_KEY`, `CAST_RECEIVER_APP_ID`, `PUBLIC_BASE_URL`, etc. — already contains a real, working `YOUTUBE_API_KEY` this feature will reuse.
 - No pre-existing uncommitted changes to account for.

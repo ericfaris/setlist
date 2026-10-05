@@ -104,7 +104,7 @@ The on-disk `QuestionBank`/`BankCategory`/`BankQuestion` format (`packages/share
 ## Repo commands & tree state
 
 - **Repo root**: `/home/eric/projects/setlist`. Working tree is **clean** (confirmed via `git status --short`, no output). Latest commit: `8ec0b04` ("Tap-to-arm the setlist; drop the board-loading sound").
-- **Node**: v24.14.0, **npm**: on `PATH` directly.
+- **Node**: v26.10.0, **npm**: on `PATH` directly.
 - **Commands** (from repo root): `npm install`, `npm run build` (shared → client → server order — shared must build first), `npm run typecheck` (workspaces), `npm test` (workspaces, `--if-present`), `npm run dev`.
 - **Python**: venv at `scripts/questionbank/.venv` — always invoke via `scripts/questionbank/.venv/bin/python`/`pip`, never bare `python`/`pip`. Test command: `scripts/questionbank/.venv/bin/python -m unittest discover -s scripts/questionbank -v`.
 - **Live deployment**: Docker (`docker compose up -d --build`, image `ericfaris/setlist:latest`, container `setlist-app-1`, bound to `127.0.0.1:8900`), publicly reachable at `https://setlist.mooseflip.com` via a Cloudflare Tunnel (remotely managed via the Cloudflare API, already set up). `.env` holds `ANTHROPIC_API_KEY` (may become unused if the AI-categorization step is fully removed — planner's call whether to keep it available for a different purpose or note it as no-longer-needed), `YOUTUBE_API_KEY` (builder-only, opt-in embeddable pre-check — unaffected by this change), `CAST_RECEIVER_APP_ID`, `PUBLIC_BASE_URL`, `QUESTION_BANK_PATH`.

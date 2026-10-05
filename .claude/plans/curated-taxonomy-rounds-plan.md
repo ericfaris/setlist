@@ -1,7 +1,7 @@
 # Curated Category Taxonomy + Multi-Round Game Structure — Implementation Plan
 
 Executor note: this file plus the repo is everything you need. Repo root is
-`/home/eric/projects/setlist`. Working tree is clean at `8ec0b04`. Node v24.14.0,
+`/home/eric/projects/setlist`. Working tree is clean at `8ec0b04`. Node v26.10.0,
 `npm` on `PATH`. Python venv at `scripts/questionbank/.venv` — **always** invoke it
 explicitly (`scripts/questionbank/.venv/bin/python`), never a bare `python`/`pip`.
 The concept brief is at `.claude/plans/curated-taxonomy-rounds-brief.md`; read it

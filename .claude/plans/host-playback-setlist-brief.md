@@ -96,7 +96,7 @@ Replace the current Jeopardy-board game entirely with a simpler "Setlist" mode:
 ## Repo commands & tree state
 
 - **Repo root**: `/home/eric/projects/setlist`. Working tree is **clean** (confirmed via `git status --short`, no output). Latest commit: `8da8d1e` ("Bump substitution to 3 attempts and auto-skip when exhausted") — i.e. the substitution system this brief asks to remove was just built and shipped in the prior session; removing it now is a deliberate reversal based on the better solution (native YT Music links) found in this conversation, not a regression.
-- **Node**: v24.14.0, **npm**: on `PATH` directly.
+- **Node**: v26.10.0, **npm**: on `PATH` directly.
 - **Commands** (from repo root): `npm install`, `npm run build` (shared → client → server order, shared must build first since server/client resolve `@setlist/shared` via its built `dist/`), `npm run typecheck` (workspaces), `npm test` (workspaces, `--if-present`), `npm run dev` (concurrent server+client dev servers).
 - **Live deployment**: Docker (`docker compose up -d --build`, image `ericfaris/setlist:latest`, container `setlist-app-1`, bound to `127.0.0.1:8900`), publicly reachable at `https://setlist.mooseflip.com` via a Cloudflare Tunnel (remotely managed via the Cloudflare API — no local config file changes needed, already set up). `.env` at the repo root holds `ANTHROPIC_API_KEY`, `YOUTUBE_API_KEY` (may become unused by the Node server after this change, still used by the offline builder), `CAST_RECEIVER_APP_ID`, `PUBLIC_BASE_URL`, `QUESTION_BANK_PATH`.
 - No pre-existing uncommitted changes to account for.
