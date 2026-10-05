@@ -10,15 +10,15 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@setlist/shared': resolve(__dirname, '../shared/src/index.ts'),
+      '@setlist/shared': resolve(import.meta.dirname, '../shared/src/index.ts'),
     },
   },
   build: {
     rollupOptions: {
       input: {
-        player: resolve(__dirname, 'index.html'),
-        receiver: resolve(__dirname, 'receiver.html'),
-        designSystem: resolve(__dirname, 'design-system.html'),
+        player: resolve(import.meta.dirname, 'index.html'),
+        receiver: resolve(import.meta.dirname, 'receiver.html'),
+        designSystem: resolve(import.meta.dirname, 'design-system.html'),
       },
     },
   },
