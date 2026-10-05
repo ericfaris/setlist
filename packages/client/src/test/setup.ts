@@ -1,4 +1,11 @@
-import '@testing-library/jest-dom/vitest';
+/// <reference types="@testing-library/jest-dom/vitest" />
+import { expect } from 'vitest';
+import * as matchers from '@testing-library/jest-dom/matchers';
+
+// Register jest-dom explicitly: under Vitest 4 the side-effect import
+// '@testing-library/jest-dom/vitest' extends a different `expect` instance,
+// so every matcher failed with "Invalid Chai property".
+expect.extend(matchers);
 
 // jsdom does not implement HTMLMediaElement playback — .play() returns
 // undefined instead of a Promise. sfx.ts's playSfx() does
