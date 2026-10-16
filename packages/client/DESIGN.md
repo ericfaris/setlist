@@ -87,6 +87,17 @@ surfaces.
 Room-wide cues stay on the TV to avoid phone/TV echo; phones only play the
 player's own private feedback.
 
+## App icon
+
+House icon standard shared with every mooseflip app (2026-10-16, modelled on
+redline and jambo): one bold, dimensional mark on a rich tile. Setlist's is a
+game-show buzzer (red dome with a music note, `--red` / `--red-deep`, cyan buzz
+lines) on a `--yellow` sunburst. Master `scripts/icons/icon.svg` (repo root);
+`python3 scripts/icons/build.py` renders `public/favicon.ico` (16/32/48),
+`apple-touch-icon.png`, `icon-192.png`, `icon-512.png` and
+`icon-maskable-512.png`, wired in `index.html` and `public/manifest.webmanifest`.
+It replaces a stray map-pin favicon. `src/icons.test.ts` guards the wiring.
+
 ## Regenerating assets
 
 Images: Ideogram (`mcp__ideogram__generate_image`). Sounds: ElevenLabs

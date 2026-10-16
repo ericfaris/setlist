@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<defs><filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+  <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000" flood-opacity=".45"/></filter>
+<radialGradient id="bgg" cx="50%" cy="55%" r="75%"><stop offset="0" stop-color="#ffe680"/><stop offset="1" stop-color="#f5a400"/></radialGradient><radialGradient id="dome" cx="50%" cy="25%" r="75%"><stop offset="0" stop-color="#ff7a84"/><stop offset="1" stop-color="#a41e2a"/></radialGradient><linearGradient id="side" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3a3a"/><stop offset="1" stop-color="#0d0d0d"/></linearGradient></defs>
+<g id="bg"><rect width="512" height="512" fill="url(#bgg)"/><g fill="#fff" opacity=".22"><path d="M256 300L856 300L844 417Z"/><path d="M256 300L810 530L755 633Z"/><path d="M256 300L680 724L589 799Z"/><path d="M256 300L486 854L373 888Z"/><path d="M256 300L256 900L139 888Z"/><path d="M256 300L26 854L-77 799Z"/><path d="M256 300L-168 724L-243 633Z"/><path d="M256 300L-298 530L-332 417Z"/><path d="M256 300L-344 300L-332 183Z"/><path d="M256 300L-298 70L-243 -33Z"/><path d="M256 300L-168 -124L-77 -199Z"/><path d="M256 300L26 -254L139 -288Z"/><path d="M256 300L256 -300L373 -288Z"/><path d="M256 300L486 -254L589 -199Z"/><path d="M256 300L680 -124L755 -33Z"/><path d="M256 300L810 70L844 183Z"/></g></g>
+<g id="mark"><g filter="url(#sh)">
+  <ellipse cx="256" cy="378" rx="176" ry="58" fill="#0d0d0d"/>
+  <rect x="80" y="324" width="352" height="54" fill="url(#side)"/>
+  <ellipse cx="256" cy="324" rx="176" ry="58" fill="#2b2b2b"/>
+  <ellipse cx="256" cy="320" rx="150" ry="46" fill="#111"/>
+  <path d="M110 318C110 140 402 140 402 318A146 44 0 0 1 110 318Z" fill="url(#dome)"/>
+  <ellipse cx="196" cy="214" rx="46" ry="22" fill="#fff" opacity=".5" transform="rotate(-28 196 214)"/>
+  <g fill="#fff">
+    <ellipse cx="236" cy="292" rx="30" ry="22" transform="rotate(-20 236 292)"/>
+    <rect x="252" y="186" width="15" height="106" rx="6"/>
+    <path d="M260 186c18 6 46 18 46 52-10-16-26-22-46-22Z"/>
+  </g>
+</g>
+<g stroke="#00b8c4" stroke-width="16" stroke-linecap="round">
+  <path d="M256 78V40"/><path d="M146 112l-24-26"/><path d="M366 112l24-26"/>
+</g></g>
+</svg>

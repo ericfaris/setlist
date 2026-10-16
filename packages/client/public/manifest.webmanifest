@@ -1,0 +1,27 @@
+{
+  "name": "Setlist",
+  "short_name": "Setlist",
+  "description": "Name that tune with a fair buzz race.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4e8d0",
+  "theme_color": "#f4e8d0",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
