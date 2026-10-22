@@ -287,8 +287,8 @@ repo.
 optional pass that drops songs whose *embedding* is disabled by the rights
 holder. It is **no longer needed** — the game plays songs through native YouTube
 Music links, which have no embed restrictions at all — so it no longer defaults
-to `YOUTUBE_API_KEY` and only runs when you pass the flag explicitly. It applies
-to `--mode playlists` only. The Node server never reads `YOUTUBE_API_KEY`.
+to any env var and only runs when you pass the flag (with a key) explicitly. It
+applies to `--mode playlists` only.
 
 ### Schema
 
@@ -392,5 +392,3 @@ the version tag in the UI corner tells you which build is live.
 | `CAST_RECEIVER_APP_ID` | *(empty)* | Google Cast custom receiver app id. Empty is fine for dev — register your own in the Cast SDK Developer Console; pinpoint's cannot be reused. |
 | `PUBLIC_BASE_URL` | `http://localhost:5173` | Base URL used to build the QR join link shown on the TV. |
 | `QUESTION_BANK_PATH` | `question-bank/bank.json` | Bank file, relative to the repo root. Falls back to the bundled sample. |
-| `YOUTUBE_API_KEY` | *(empty)* | **Builder only, optional.** Legacy embeddable pre-check, and only when `--youtube-api-key` is passed explicitly. The Node server never reads it. |
-| `ANTHROPIC_API_KEY` | *(empty)* | **Unused.** The AI categorisation step was removed with the curated taxonomy. Nothing in this repo reads it; it is left in `.env`/`.env.example` only because removing it isn't worth a deploy. |
